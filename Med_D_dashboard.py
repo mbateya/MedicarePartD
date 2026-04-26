@@ -347,11 +347,32 @@ def _summarize(
     return _add_derived_metrics(summary)
 
 
-def _top_n_per_year(df: pd.DataFrame, rank_col: str, top_n: int) -> pd.DataFrame:
-    return (
+def _annual_top_n_full_history(
+    df: pd.DataFrame,
+    group_col: str,
+    rank_col: str,
+    top_n: int,
+) -> pd.DataFrame:
+    annual_top_values = (
         df.sort_values(["Year", rank_col], ascending=[True, False])
         .groupby("Year", group_keys=False)
-        .head(top_n)
+        .head(top_n)[group_col]
+        .drop_duplicates()
+        .tolist()
+    )
+    top_values = (
+        df[df[group_col].isin(annual_top_values)]
+        .groupby(group_col, dropna=False)[rank_col]
+        .sum()
+        .sort_values(ascending=False)
+        .index.tolist()
+    )
+    order = {value: index for index, value in enumerate(top_values)}
+    top_df = df[df[group_col].isin(top_values)].copy()
+    top_df["_Sort Order"] = top_df[group_col].map(order)
+    return (
+        top_df.sort_values(["_Sort Order", "Year"])
+        .drop(columns="_Sort Order")
         .reset_index(drop=True)
     )
 
@@ -360,12 +381,12 @@ def summarize_top_drugs(df: pd.DataFrame, grouping: str, top_n: int) -> pd.DataF
     drug_col = "Brand Name" if grouping == "Brand name" else "Generic Name"
     summary = _summarize(df, ["Year", drug_col])
     summary = summary.rename(columns={drug_col: "Drug Name"})
-    return _top_n_per_year(summary, "Total Drug Cost", top_n)
+    return _annual_top_n_full_history(summary, "Drug Name", "Total Drug Cost", top_n)
 
 
 def summarize_top_specialties(df: pd.DataFrame, top_n: int) -> pd.DataFrame:
     summary = _summarize(df, ["Year", "Specialty"])
-    return _top_n_per_year(summary, "Total Drug Cost", top_n)
+    return _annual_top_n_full_history(summary, "Specialty", "Total Drug Cost", top_n)
 
 
 def summarize_trends(df: pd.DataFrame, grouping: str, selected_drugs: list[str]) -> pd.DataFrame:
@@ -532,6 +553,13 @@ def render_charts(
         margin=dict(l=20, r=20, t=70, b=20),
         hoverlabel=dict(bgcolor="white"),
     )
+    category_axis = x if orientation == "v" else y
+    category_order = chart_df[category_axis].drop_duplicates().tolist()
+    if orientation == "v":
+        fig.update_xaxes(categoryorder="array", categoryarray=category_order)
+    else:
+        fig.update_yaxes(categoryorder="array", categoryarray=category_order)
+
     axis_max = float(chart_df[y].max() if orientation == "v" else chart_df[x].max())
     tick_vals, tick_text = _build_billions_ticks(axis_max)
     if orientation == "v":
@@ -622,11 +650,11 @@ def main() -> None:
 
     st.divider()
 
-    st.subheader("Top Drugs by Year")
-    top_drug_n = render_top_n_control("Top N drugs", "top_drug_n")
+    st.subheader("Annual Top Drugs")
+    top_drug_n = render_top_n_control("Annual top N drugs", "top_drug_n")
     top_drugs = summarize_top_drugs(filtered_df, grouping, top_drug_n)
     drug_title = _section_title(
-        f"Top {top_drug_n} drugs by total drug cost",
+        f"Drugs appearing in annual top {top_drug_n} by total drug cost",
         grouping=grouping,
         context=context,
     )
@@ -660,8 +688,8 @@ def main() -> None:
 
     st.divider()
 
-    st.subheader("Top Specialties by Year")
-    top_specialty_n = render_top_n_control("Top N specialties", "top_specialty_n")
+    st.subheader("Annual Top Specialties")
+    top_specialty_n = render_top_n_control("Annual top N specialties", "top_specialty_n")
     top_specialties = summarize_top_specialties(specialty_section_df, top_specialty_n)
     specialty_context = _filter_context(selected_years, selected_states, [], [], [])
     st.caption(specialty_context)
@@ -672,7 +700,7 @@ def main() -> None:
             y="Total Drug Cost",
             color="Year",
             title=_section_title(
-                f"Top {top_specialty_n} specialties by total drug cost",
+                f"Specialties appearing in annual top {top_specialty_n} by total drug cost",
                 context=specialty_context,
             ),
         ),
