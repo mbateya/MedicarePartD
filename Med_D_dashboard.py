@@ -44,7 +44,7 @@ SPECIALTY_ALIASES = {
 }
 
 
-st.set_page_config(page_title=APP_TITLE, layout="wide")
+st.set_page_config(page_title=APP_TITLE, layout="wide", initial_sidebar_state="collapsed")
 
 
 METRIC_CARD_CSS = """
@@ -318,8 +318,6 @@ def apply_filters(
     years: list[int],
     states: list[str],
     specialties: list[str],
-    brands: list[str],
-    generics: list[str],
 ) -> pd.DataFrame:
     filtered = df
 
@@ -329,10 +327,6 @@ def apply_filters(
         filtered = filtered[filtered["State"].isin(states)]
     if specialties:
         filtered = filtered[filtered["Specialty"].isin(specialties)]
-    if brands:
-        filtered = filtered[filtered["Brand Name"].isin(brands)]
-    if generics:
-        filtered = filtered[filtered["Generic Name"].isin(generics)]
 
     return filtered
 
@@ -416,8 +410,6 @@ def _filter_context(
     years: list[int],
     states: list[str],
     specialties: list[str],
-    brands: list[str],
-    generics: list[str],
 ) -> str:
     parts = []
     if years:
@@ -428,10 +420,6 @@ def _filter_context(
         parts.append(
             f"Specialties: {', '.join(specialties[:3])}{'...' if len(specialties) > 3 else ''}"
         )
-    if brands:
-        parts.append(f"Brands: {', '.join(brands[:3])}{'...' if len(brands) > 3 else ''}")
-    if generics:
-        parts.append(f"Generics: {', '.join(generics[:3])}{'...' if len(generics) > 3 else ''}")
     return " | ".join(parts) if parts else "All available records"
 
 
@@ -590,43 +578,36 @@ def main() -> None:
         st.error(str(exc))
         st.stop()
 
-    st.sidebar.header("Global filters")
-
     year_options = sorted(df["Year"].dropna().astype(int).unique().tolist())
     state_options = _select_options(df["State"])
     specialty_options = _select_options(df["Specialty"])
-    brand_options = _select_options(df["Brand Name"])
-    generic_options = _select_options(df["Generic Name"])
 
-    selected_years = st.sidebar.multiselect("Year", year_options, default=year_options)
-    selected_states = st.sidebar.multiselect("State", state_options)
-    selected_specialties = st.sidebar.multiselect("Specialty", specialty_options)
-
-    grouping = st.sidebar.radio(
-        "Drug grouping",
-        ["Brand name", "Generic name"],
-        index=0,
-        horizontal=False,
-    )
-
-    st.sidebar.header("Drug filters")
-    selected_brands = st.sidebar.multiselect("Brand Name", brand_options)
-    selected_generics = st.sidebar.multiselect("Generic Name", generic_options)
+    st.markdown("#### Filters")
+    filter_cols = st.columns([1.1, 1.7, 2.6, 1.3])
+    with filter_cols[0]:
+        selected_years = st.multiselect("Year", year_options, default=year_options)
+    with filter_cols[1]:
+        selected_states = st.multiselect("State", state_options)
+    with filter_cols[2]:
+        selected_specialties = st.multiselect("Specialty", specialty_options)
+    with filter_cols[3]:
+        grouping = st.radio(
+            "Drug grouping",
+            ["Brand name", "Generic name"],
+            index=0,
+            horizontal=True,
+        )
 
     filtered_df = apply_filters(
         df,
         selected_years,
         selected_states,
         selected_specialties,
-        selected_brands,
-        selected_generics,
     )
     specialty_section_df = apply_filters(
         df,
         selected_years,
         selected_states,
-        [],
-        [],
         [],
     )
 
@@ -638,8 +619,6 @@ def main() -> None:
         selected_years,
         selected_states,
         selected_specialties,
-        selected_brands,
-        selected_generics,
     )
 
     total_cost = filtered_df["Total Drug Cost"].sum()
@@ -701,7 +680,7 @@ def main() -> None:
         "top_specialty_n",
     )
     top_specialties = summarize_top_specialties(specialty_section_df, top_specialty_n)
-    specialty_context = _filter_context(selected_years, selected_states, [], [], [])
+    specialty_context = _filter_context(selected_years, selected_states, [])
     st.caption(specialty_context)
     st.caption(
         f"A specialty is included if it ranks in the top {top_specialty_n} for any "
