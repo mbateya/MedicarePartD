@@ -17,22 +17,10 @@ APP_SUBTITLE = (
 
 REPO_DIR = Path(__file__).resolve().parent
 PROCESSED_PATH = REPO_DIR / "data" / "processed" / "medicare_partd_2021_2023.parquet"
-PRESCRIBER_PROCESSED_PATH = (
-    REPO_DIR / "data" / "processed" / "medicare_partd_prescriber_2021_2023.parquet"
-)
-PRESCRIBER_TREND_PATH = (
-    REPO_DIR / "data" / "processed" / "medicare_partd_prescriber_year_trends_2021_2023.parquet"
-)
-PRESCRIBER_INDEX_PATH = (
-    REPO_DIR / "data" / "processed" / "medicare_partd_prescriber_index_2021_2023.parquet"
-)
 SUPPORTED_EXTENSIONS = {".csv", ".txt", ".tsv", ".parquet"}
 TARGET_YEARS = {2021, 2022, 2023}
 
 RAW_TO_CLEAN = {
-    "Prscrbr_NPI": "Prescriber NPI",
-    "Prscrbr_First_Name": "Prescriber First Name",
-    "Prscrbr_Last_Org_Name": "Prescriber Last/Org Name",
     "Prscrbr_State_Abrvtn": "State",
     "Prscrbr_Type": "Specialty",
     "Brnd_Name": "Brand Name",
@@ -41,24 +29,11 @@ RAW_TO_CLEAN = {
     "Tot_30day_Fills": "Total 30-Day Fills",
     "Tot_Day_Suply": "Total Days Supply",
     "Tot_Drug_Cst": "Total Drug Cost",
-    "Tot_Benes": "Total Beneficiaries",
 }
 
 RAW_REQUIRED_COLUMNS = list(RAW_TO_CLEAN.keys())
 DIMENSION_COLUMNS = ["Year", "State", "Specialty", "Brand Name", "Generic Name"]
-PRESCRIBER_DIMENSION_COLUMNS = DIMENSION_COLUMNS + [
-    "Prescriber NPI",
-    "Prescriber Name",
-    "Prescriber",
-]
 METRIC_COLUMNS = [
-    "Total Claims",
-    "Total 30-Day Fills",
-    "Total Days Supply",
-    "Total Drug Cost",
-    "Total Beneficiaries",
-]
-PRESCRIBER_TREND_METRIC_COLUMNS = [
     "Total Claims",
     "Total 30-Day Fills",
     "Total Days Supply",
@@ -147,10 +122,7 @@ def find_data_files() -> list[Path]:
         if path.suffix.lower() not in SUPPORTED_EXTENSIONS:
             continue
         year = infer_year_from_filename(path)
-        if year in TARGET_YEARS and path.resolve() not in {
-            PROCESSED_PATH.resolve(),
-            PRESCRIBER_PROCESSED_PATH.resolve(),
-        }:
+        if year in TARGET_YEARS and path.resolve() != PROCESSED_PATH.resolve():
             files.append(path)
 
     return sorted(files, key=lambda p: infer_year_from_filename(p) or 0)
@@ -213,33 +185,13 @@ def _validate_columns(path: Path) -> None:
         raise ValueError(f"{path.name} is missing required columns: {', '.join(missing)}")
 
 
-def _build_prescriber_fields(chunk: pd.DataFrame) -> pd.DataFrame:
-    first = chunk["Prescriber First Name"].fillna("").astype(str).str.strip()
-    last_org = chunk["Prescriber Last/Org Name"].fillna("").astype(str).str.strip()
-    npi = chunk["Prescriber NPI"].fillna("").astype(str).str.strip()
-
-    prescriber_name = last_org.mask(last_org.eq(""), "Unknown")
-    has_first = first.ne("")
-    prescriber_name = prescriber_name.where(~has_first, prescriber_name + ", " + first)
-    prescriber_name = prescriber_name.mask(prescriber_name.eq(""), "Unknown")
-
-    prescriber = prescriber_name.where(npi.eq(""), prescriber_name + " (" + npi + ")")
-    prescriber = prescriber.mask(prescriber.eq(""), "Unknown")
-
-    chunk["Prescriber NPI"] = npi.mask(npi.eq(""), "Unknown")
-    chunk["Prescriber Name"] = prescriber_name
-    chunk["Prescriber"] = prescriber
-    return chunk
-
-
-def load_raw_files(files: list[Path]) -> tuple[pd.DataFrame, pd.DataFrame]:
+def load_raw_files(files: list[Path]) -> pd.DataFrame:
     if not files:
         raise FileNotFoundError(
             "No Medicare Part D files for 2021, 2022, or 2023 were found in the repo folder."
         )
 
     year_frames = []
-    prescriber_year_frames = []
     for path in files:
         year = infer_year_from_filename(path)
         if year is None:
@@ -247,11 +199,9 @@ def load_raw_files(files: list[Path]) -> tuple[pd.DataFrame, pd.DataFrame]:
 
         _validate_columns(path)
         chunk_frames = []
-        prescriber_chunk_frames = []
         for chunk in _read_raw_chunks(path):
             chunk = chunk.rename(columns=RAW_TO_CLEAN)
             chunk["Year"] = year
-            chunk = _build_prescriber_fields(chunk)
 
             for col in ["State", "Specialty", "Brand Name", "Generic Name"]:
                 chunk[col] = chunk[col].fillna("Unknown").astype(str).str.strip()
@@ -266,13 +216,6 @@ def load_raw_files(files: list[Path]) -> tuple[pd.DataFrame, pd.DataFrame]:
             )
             chunk_frames.append(chunk_summary)
 
-            prescriber_chunk_summary = (
-                chunk.groupby(PRESCRIBER_DIMENSION_COLUMNS, dropna=False, as_index=False)[
-                    METRIC_COLUMNS
-                ].sum()
-            )
-            prescriber_chunk_frames.append(prescriber_chunk_summary)
-
         year_df = (
             pd.concat(chunk_frames, ignore_index=True)
             .groupby(DIMENSION_COLUMNS, dropna=False, as_index=False)[METRIC_COLUMNS]
@@ -280,17 +223,7 @@ def load_raw_files(files: list[Path]) -> tuple[pd.DataFrame, pd.DataFrame]:
         )
         year_frames.append(year_df)
 
-        prescriber_year_df = (
-            pd.concat(prescriber_chunk_frames, ignore_index=True)
-            .groupby(PRESCRIBER_DIMENSION_COLUMNS, dropna=False, as_index=False)[METRIC_COLUMNS]
-            .sum()
-        )
-        prescriber_year_frames.append(prescriber_year_df)
-
-    return (
-        pd.concat(year_frames, ignore_index=True),
-        pd.concat(prescriber_year_frames, ignore_index=True),
-    )
+    return pd.concat(year_frames, ignore_index=True)
 
 
 def _add_derived_metrics(df: pd.DataFrame) -> pd.DataFrame:
@@ -323,27 +256,10 @@ def _load_processed_parquet(path: Path, action: str) -> pd.DataFrame:
         ) from exc
 
 
-def _combine_grouped_frames(
-    frames: list[pd.DataFrame],
-    group_cols: list[str],
-    metric_cols: list[str] | None = None,
-) -> pd.DataFrame:
-    metric_cols = metric_cols or METRIC_COLUMNS
-    if not frames:
-        return pd.DataFrame(columns=group_cols + metric_cols)
-
-    return (
-        pd.concat(frames, ignore_index=True)
-        .groupby(group_cols, dropna=False, as_index=False)[metric_cols]
-        .sum()
-    )
-
-
-def _build_processed_outputs() -> tuple[pd.DataFrame, pd.DataFrame]:
+def build_processed_data() -> pd.DataFrame:
     files = find_data_files()
-    df, prescriber_df = load_raw_files(files)
+    df = load_raw_files(files)
     df = _add_derived_metrics(df)
-    prescriber_df = _add_derived_metrics(prescriber_df)
 
     PROCESSED_PATH.parent.mkdir(parents=True, exist_ok=True)
     _write_processed_parquet(
@@ -351,87 +267,7 @@ def _build_processed_outputs() -> tuple[pd.DataFrame, pd.DataFrame]:
         PROCESSED_PATH,
         "Saving the processed dataset",
     )
-    _write_processed_parquet(
-        prescriber_df,
-        PRESCRIBER_PROCESSED_PATH,
-        "Saving the processed prescriber dataset",
-    )
-    return df, prescriber_df
-
-
-def build_processed_data() -> pd.DataFrame:
-    df, _ = _build_processed_outputs()
     return df
-
-
-def _build_prescriber_year_trends() -> pd.DataFrame:
-    if not PRESCRIBER_PROCESSED_PATH.exists():
-        _build_processed_outputs()
-
-    try:
-        import pyarrow.parquet as pq
-    except ImportError as exc:
-        raise RuntimeError(
-            "Building the prescriber trend cache requires pyarrow. Install pyarrow "
-            "or rebuild with a smaller prescriber trend file."
-        ) from exc
-
-    group_cols = ["Year", "Prescriber"]
-    read_cols = group_cols + PRESCRIBER_TREND_METRIC_COLUMNS
-    parquet_file = pq.ParquetFile(PRESCRIBER_PROCESSED_PATH)
-    grouped_frames: list[pd.DataFrame] = []
-
-    for row_group_index in range(parquet_file.num_row_groups):
-        chunk = parquet_file.read_row_group(row_group_index, columns=read_cols).to_pandas()
-        grouped_frames.append(
-            chunk.groupby(group_cols, dropna=False, as_index=False)[
-                PRESCRIBER_TREND_METRIC_COLUMNS
-            ].sum()
-        )
-
-        # Bound memory while reducing 77.9M detailed rows to year-prescriber trends.
-        if len(grouped_frames) >= 5:
-            grouped_frames = [
-                _combine_grouped_frames(
-                    grouped_frames,
-                    group_cols,
-                    PRESCRIBER_TREND_METRIC_COLUMNS,
-                )
-            ]
-
-    trend_df = _combine_grouped_frames(
-        grouped_frames,
-        group_cols,
-        PRESCRIBER_TREND_METRIC_COLUMNS,
-    )
-    trend_df = _add_derived_metrics(trend_df).sort_values(["Prescriber", "Year"])
-    _write_processed_parquet(
-        trend_df,
-        PRESCRIBER_TREND_PATH,
-        "Saving the prescriber trend cache",
-    )
-    return trend_df
-
-
-def _build_prescriber_index(trend_df: pd.DataFrame | None = None) -> pd.DataFrame:
-    if trend_df is None:
-        trend_df = load_or_build_prescriber_trend_dataset()
-
-    index_df = _summarize(
-        trend_df,
-        ["Prescriber"],
-        PRESCRIBER_TREND_METRIC_COLUMNS,
-    ).sort_values(
-        "Total Drug Cost",
-        ascending=False,
-    )
-    index_df["Search Key"] = index_df["Prescriber"].astype(str).str.casefold()
-    _write_processed_parquet(
-        index_df,
-        PRESCRIBER_INDEX_PATH,
-        "Saving the prescriber search index",
-    )
-    return index_df
 
 
 @st.cache_data(show_spinner="Loading Medicare Part D dataset...")
@@ -443,28 +279,6 @@ def load_or_build_dataset() -> pd.DataFrame:
         )
 
     return build_processed_data()
-
-
-@st.cache_data(show_spinner="Preparing prescriber trend cache...")
-def load_or_build_prescriber_trend_dataset() -> pd.DataFrame:
-    if PRESCRIBER_TREND_PATH.exists():
-        return _load_processed_parquet(
-            PRESCRIBER_TREND_PATH,
-            "Loading the prescriber trend cache",
-        )
-
-    return _build_prescriber_year_trends()
-
-
-@st.cache_data(show_spinner="Loading prescriber search index...")
-def load_or_build_prescriber_index() -> pd.DataFrame:
-    if PRESCRIBER_INDEX_PATH.exists():
-        return _load_processed_parquet(
-            PRESCRIBER_INDEX_PATH,
-            "Loading the prescriber search index",
-        )
-
-    return _build_prescriber_index()
 
 
 def apply_filters(
@@ -529,32 +343,6 @@ def summarize_trends(df: pd.DataFrame, grouping: str, selected_drugs: list[str])
     return summary.rename(columns={drug_col: "Drug Name"}).sort_values(["Drug Name", "Year"])
 
 
-def summarize_prescriber_trends(df: pd.DataFrame, selected_prescribers: list[str]) -> pd.DataFrame:
-    trend_df = df[df["Prescriber"].isin(selected_prescribers)]
-    summary = _summarize(
-        trend_df,
-        ["Year", "Prescriber"],
-        PRESCRIBER_TREND_METRIC_COLUMNS,
-    )
-    return summary.sort_values(["Prescriber", "Year"])
-
-
-@st.cache_data(show_spinner=False)
-def search_prescribers(query: str, limit: int = 25) -> list[str]:
-    normalized_query = query.strip().casefold()
-    if len(normalized_query) < 3:
-        return []
-
-    index_df = load_or_build_prescriber_index()
-    search_key = (
-        index_df["Search Key"]
-        if "Search Key" in index_df.columns
-        else index_df["Prescriber"].astype(str).str.casefold()
-    )
-    matches = index_df[search_key.str.contains(normalized_query, regex=False, na=False)]
-    return matches.head(limit)["Prescriber"].tolist()
-
-
 def format_tables(df: pd.DataFrame) -> pd.io.formats.style.Styler:
     currency_cols = [
         col
@@ -563,7 +351,7 @@ def format_tables(df: pd.DataFrame) -> pd.io.formats.style.Styler:
     ]
     number_cols = [
         col
-        for col in ["Total Claims", "Total 30-Day Fills", "Total Days Supply", "Total Beneficiaries"]
+        for col in ["Total Claims", "Total 30-Day Fills", "Total Days Supply"]
         if col in df.columns
     ]
     formats = {col: "${:,.2f}" for col in currency_cols}
@@ -701,7 +489,6 @@ def render_charts(
             "Total Drug Cost": ":$,.2f",
             "Total Claims": ":,.0f",
             "Total 30-Day Fills": ":,.0f",
-            "Total Beneficiaries": ":,.0f",
             "Cost per Claim": ":$,.2f",
             "Cost per 30-Day Fill": ":$,.2f",
         },
@@ -831,7 +618,6 @@ def main() -> None:
                     "Total Drug Cost",
                     "Total Claims",
                     "Total 30-Day Fills",
-                    "Total Beneficiaries",
                     "Cost per Claim",
                     "Cost per 30-Day Fill",
                 ]
@@ -869,7 +655,6 @@ def main() -> None:
                     "Total Drug Cost",
                     "Total Claims",
                     "Total 30-Day Fills",
-                    "Total Beneficiaries",
                     "Cost per Claim",
                     "Cost per 30-Day Fill",
                 ]
@@ -909,7 +694,6 @@ def main() -> None:
                     "Total Drug Cost": ":$,.2f",
                     "Total Claims": ":,.0f",
                     "Total 30-Day Fills": ":,.0f",
-                    "Total Beneficiaries": ":,.0f",
                     "Cost per Claim": ":$,.2f",
                     "Cost per 30-Day Fill": ":$,.2f",
                 },
@@ -936,7 +720,6 @@ def main() -> None:
                             "Total Drug Cost",
                             "Total Claims",
                             "Total 30-Day Fills",
-                            "Total Beneficiaries",
                             "Cost per Claim",
                             "Cost per 30-Day Fill",
                         ]
@@ -944,97 +727,6 @@ def main() -> None:
                 ),
                 use_container_width=True,
             )
-
-    st.divider()
-
-    st.subheader("Yearly Prescriber Trend")
-    st.write("Search for up to 5 prescribers and click Generate prescriber trend.")
-    st.caption(
-        "For performance, this section uses a compact year-prescriber cache and applies "
-        "the Year filter only."
-    )
-
-    prescriber_query = st.text_input(
-        "Search prescriber name or NPI",
-        placeholder="Type at least 3 characters, for example SMITH or 1234567890",
-    )
-    current_prescribers = st.session_state.get("selected_prescribers", [])
-    prescriber_options = search_prescribers(prescriber_query)
-    prescriber_options = list(dict.fromkeys(current_prescribers + prescriber_options))
-    if prescriber_query and len(prescriber_query.strip()) < 3:
-        st.info("Type at least 3 characters to search prescribers.")
-
-    selected_prescribers = st.multiselect(
-        "Select prescribers",
-        prescriber_options,
-        max_selections=5,
-        key="selected_prescribers",
-    )
-
-    if st.button("Generate prescriber trend"):
-        if not selected_prescribers:
-            st.info("Select at least one prescriber to generate the yearly trend.")
-        elif len(selected_prescribers) > 5:
-            st.warning("Select no more than 5 prescribers.")
-        else:
-            prescriber_trend_source = load_or_build_prescriber_trend_dataset()
-            if selected_years:
-                prescriber_trend_source = prescriber_trend_source[
-                    prescriber_trend_source["Year"].isin(selected_years)
-                ]
-            prescriber_trend_df = summarize_prescriber_trends(
-                prescriber_trend_source,
-                selected_prescribers,
-            )
-            if prescriber_trend_df.empty:
-                st.info("No prescriber trend records match the selected years.")
-            else:
-                prescriber_context = _filter_context(selected_years, [], [], [], [])
-                fig = px.line(
-                    prescriber_trend_df,
-                    x="Year",
-                    y="Total Drug Cost",
-                    color="Prescriber",
-                    markers=True,
-                    template="plotly_white",
-                    hover_data={
-                        "Total Drug Cost": ":$,.2f",
-                        "Total Claims": ":,.0f",
-                        "Total 30-Day Fills": ":,.0f",
-                        "Cost per Claim": ":$,.2f",
-                        "Cost per 30-Day Fill": ":$,.2f",
-                    },
-                    title=_section_title(
-                        "Yearly trend for selected prescribers",
-                        context=prescriber_context,
-                    ),
-                )
-                fig.update_layout(
-                    title_x=0,
-                    legend_title_text="Prescriber",
-                    margin=dict(l=20, r=20, t=70, b=20),
-                )
-                tick_vals, tick_text = _build_billions_ticks(
-                    float(prescriber_trend_df["Total Drug Cost"].max())
-                )
-                fig.update_yaxes(tickvals=tick_vals, ticktext=tick_text, rangemode="tozero")
-                st.plotly_chart(fig, use_container_width=True)
-                st.dataframe(
-                    format_tables(
-                        prescriber_trend_df[
-                            [
-                                "Year",
-                                "Prescriber",
-                                "Total Drug Cost",
-                                "Total Claims",
-                                "Total 30-Day Fills",
-                                "Cost per Claim",
-                                "Cost per 30-Day Fill",
-                            ]
-                        ]
-                    ),
-                    use_container_width=True,
-                )
 
     st.divider()
     st.caption("Run with: streamlit run Med_D_dashboard.py")

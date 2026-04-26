@@ -2,7 +2,7 @@
 
 Interactive Streamlit dashboard for exploring Medicare Part D prescribing patterns across 2021, 2022, and 2023.
 
-The app summarizes prescription drug cost and utilization by year, drug, specialty, state, and prescriber. It can build optimized parquet cache files from raw Medicare Part D CSV, TXT, TSV, or parquet files on first run.
+The app summarizes prescription drug cost and utilization by year, drug, specialty, and state. It can build an optimized parquet cache from raw Medicare Part D CSV, TXT, TSV, or parquet files on first run.
 
 ## Features
 
@@ -11,7 +11,6 @@ The app summarizes prescription drug cost and utilization by year, drug, special
 - Top drugs by year, grouped by brand or generic name
 - Top specialties by year
 - Yearly trend charts for selected drugs
-- Prescriber search and yearly prescriber trend charts
 - Local parquet cache generation for faster repeat loading
 
 ## Data
@@ -22,9 +21,6 @@ The raw CMS CSV files and generated parquet caches are intentionally ignored by 
 
 Expected raw column names include:
 
-- `Prscrbr_NPI`
-- `Prscrbr_First_Name`
-- `Prscrbr_Last_Org_Name`
 - `Prscrbr_State_Abrvtn`
 - `Prscrbr_Type`
 - `Brnd_Name`
@@ -33,7 +29,6 @@ Expected raw column names include:
 - `Tot_30day_Fills`
 - `Tot_Day_Suply`
 - `Tot_Drug_Cst`
-- `Tot_Benes`
 
 ## Setup
 
@@ -70,11 +65,8 @@ streamlit run Med_D_dashboard.py
 
 ## Cache Files
 
-On first run, the app creates parquet cache files under `data/processed/`:
+On first run, the app creates one parquet cache file under `data/processed/`:
 
 - `medicare_partd_2021_2023.parquet`
-- `medicare_partd_prescriber_2021_2023.parquet`
-- `medicare_partd_prescriber_year_trends_2021_2023.parquet`
-- `medicare_partd_prescriber_index_2021_2023.parquet`
 
-These files are generated artifacts and are not tracked by git.
+Prescriber-level cache files are intentionally ignored by git because they are too large for a normal GitHub and Streamlit Cloud deployment.

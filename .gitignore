@@ -22,6 +22,6 @@ env/
 # Streamlit local secrets
 .streamlit/secrets.toml
 
-# Large local Medicare data and generated caches
+# Large local Medicare raw data and prescriber-level caches
 MUP_DPR_*.csv
-data/processed/*.parquet
+data/processed/medicare_partd_prescriber*.parquet
