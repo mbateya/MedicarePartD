@@ -651,14 +651,21 @@ def main() -> None:
     st.divider()
 
     st.subheader("Annual Top Drugs")
-    top_drug_n = render_top_n_control("Annual top N drugs", "top_drug_n")
+    top_drug_n = render_top_n_control(
+        "Show drugs appearing in each year's top:",
+        "top_drug_n",
+    )
     top_drugs = summarize_top_drugs(filtered_df, grouping, top_drug_n)
     drug_title = _section_title(
-        f"Drugs appearing in annual top {top_drug_n} by total drug cost",
+        f"Drugs Appearing in the Annual Top {top_drug_n} by Total Drug Cost",
         grouping=grouping,
         context=context,
     )
     st.caption(context)
+    st.caption(
+        f"A drug is included if it ranks in the top {top_drug_n} for any selected year. "
+        "The chart then shows that drug's full trend across all selected years."
+    )
     st.plotly_chart(
         render_charts(
             top_drugs,
@@ -689,10 +696,18 @@ def main() -> None:
     st.divider()
 
     st.subheader("Annual Top Specialties")
-    top_specialty_n = render_top_n_control("Annual top N specialties", "top_specialty_n")
+    top_specialty_n = render_top_n_control(
+        "Show specialties appearing in each year's top:",
+        "top_specialty_n",
+    )
     top_specialties = summarize_top_specialties(specialty_section_df, top_specialty_n)
     specialty_context = _filter_context(selected_years, selected_states, [], [], [])
     st.caption(specialty_context)
+    st.caption(
+        f"A specialty is included if it ranks in the top {top_specialty_n} for any "
+        "selected year. The chart then shows that specialty's full trend across all "
+        "selected years."
+    )
     st.plotly_chart(
         render_charts(
             top_specialties,
@@ -700,7 +715,10 @@ def main() -> None:
             y="Total Drug Cost",
             color="Year",
             title=_section_title(
-                f"Specialties appearing in annual top {top_specialty_n} by total drug cost",
+                (
+                    "Specialties Appearing in the Annual Top "
+                    f"{top_specialty_n} by Total Drug Cost"
+                ),
                 context=specialty_context,
             ),
         ),
