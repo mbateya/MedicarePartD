@@ -39,6 +39,9 @@ METRIC_COLUMNS = [
     "Total Days Supply",
     "Total Drug Cost",
 ]
+SPECIALTY_ALIASES = {
+    "Family Medicine": "Family Practice",
+}
 
 
 st.set_page_config(page_title=APP_TITLE, layout="wide")
@@ -185,6 +188,22 @@ def _validate_columns(path: Path) -> None:
         raise ValueError(f"{path.name} is missing required columns: {', '.join(missing)}")
 
 
+def _normalize_specialties(series: pd.Series) -> pd.Series:
+    specialties = series.fillna("Unknown").astype(str).str.strip()
+    specialties = specialties.mask(specialties.eq(""), "Unknown")
+    return specialties.replace(SPECIALTY_ALIASES)
+
+
+def _normalize_dataset(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    df["Specialty"] = _normalize_specialties(df["Specialty"])
+    normalized = (
+        df.groupby(DIMENSION_COLUMNS, dropna=False, as_index=False)[METRIC_COLUMNS]
+        .sum()
+    )
+    return _add_derived_metrics(normalized)
+
+
 def load_raw_files(files: list[Path]) -> pd.DataFrame:
     if not files:
         raise FileNotFoundError(
@@ -206,6 +225,7 @@ def load_raw_files(files: list[Path]) -> pd.DataFrame:
             for col in ["State", "Specialty", "Brand Name", "Generic Name"]:
                 chunk[col] = chunk[col].fillna("Unknown").astype(str).str.strip()
                 chunk.loc[chunk[col].eq(""), col] = "Unknown"
+            chunk["Specialty"] = _normalize_specialties(chunk["Specialty"])
 
             for col in METRIC_COLUMNS:
                 chunk[col] = pd.to_numeric(chunk[col], errors="coerce").fillna(0)
@@ -259,7 +279,7 @@ def _load_processed_parquet(path: Path, action: str) -> pd.DataFrame:
 def build_processed_data() -> pd.DataFrame:
     files = find_data_files()
     df = load_raw_files(files)
-    df = _add_derived_metrics(df)
+    df = _normalize_dataset(df)
 
     PROCESSED_PATH.parent.mkdir(parents=True, exist_ok=True)
     _write_processed_parquet(
@@ -273,12 +293,24 @@ def build_processed_data() -> pd.DataFrame:
 @st.cache_data(show_spinner="Loading Medicare Part D dataset...")
 def load_or_build_dataset() -> pd.DataFrame:
     if PROCESSED_PATH.exists():
-        return _load_processed_parquet(
-            PROCESSED_PATH,
-            "Loading the processed parquet",
+        return _normalize_dataset(
+            _load_processed_parquet(
+                PROCESSED_PATH,
+                "Loading the processed parquet",
+            )
         )
 
     return build_processed_data()
+
+
+def render_top_n_control(label: str, key: str) -> int:
+    selection = st.segmented_control(
+        label,
+        options=[5, 10, 20],
+        default=10,
+        key=key,
+    )
+    return int(selection or 10)
 
 
 def apply_filters(
@@ -591,7 +623,7 @@ def main() -> None:
     st.divider()
 
     st.subheader("Top Drugs by Year")
-    top_drug_n = st.selectbox("Top N drugs", [5, 10, 20], index=1)
+    top_drug_n = render_top_n_control("Top N drugs", "top_drug_n")
     top_drugs = summarize_top_drugs(filtered_df, grouping, top_drug_n)
     drug_title = _section_title(
         f"Top {top_drug_n} drugs by total drug cost",
@@ -629,7 +661,7 @@ def main() -> None:
     st.divider()
 
     st.subheader("Top Specialties by Year")
-    top_specialty_n = st.selectbox("Top N specialties", [5, 10, 20], index=1)
+    top_specialty_n = render_top_n_control("Top N specialties", "top_specialty_n")
     top_specialties = summarize_top_specialties(specialty_section_df, top_specialty_n)
     specialty_context = _filter_context(selected_years, selected_states, [], [], [])
     st.caption(specialty_context)
