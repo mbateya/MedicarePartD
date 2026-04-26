@@ -383,6 +383,10 @@ def summarize_top_specialties(df: pd.DataFrame, top_n: int) -> pd.DataFrame:
     return _annual_top_n_full_history(summary, "Specialty", "Total Drug Cost", top_n)
 
 
+def summarize_yearly_spending(df: pd.DataFrame) -> pd.DataFrame:
+    return _summarize(df, ["Year"]).sort_values("Year")
+
+
 def summarize_trends(df: pd.DataFrame, grouping: str, selected_drugs: list[str]) -> pd.DataFrame:
     drug_col = "Brand Name" if grouping == "Brand name" else "Generic Name"
     trend_df = df[df[drug_col].isin(selected_drugs)]
@@ -557,6 +561,39 @@ def render_charts(
     return fig
 
 
+def render_yearly_spending_chart(df: pd.DataFrame, title: str):
+    fig = px.area(
+        df,
+        x="Year",
+        y="Total Drug Cost",
+        template="plotly_white",
+        hover_data={
+            "Total Drug Cost": ":$,.2f",
+            "Total Claims": ":,.0f",
+            "Total 30-Day Fills": ":,.0f",
+            "Cost per Claim": ":$,.2f",
+            "Cost per 30-Day Fill": ":$,.2f",
+        },
+        title=title,
+    )
+    fig.update_traces(
+        mode="lines+markers",
+        line=dict(color="#2563eb", width=3),
+        marker=dict(size=9, color="#2563eb"),
+        fillcolor="rgba(37, 99, 235, 0.16)",
+    )
+    fig.update_layout(
+        title_x=0,
+        showlegend=False,
+        margin=dict(l=20, r=20, t=70, b=20),
+        hoverlabel=dict(bgcolor="white"),
+    )
+    tick_vals, tick_text = _build_billions_ticks(float(df["Total Drug Cost"].max()))
+    fig.update_xaxes(dtick=1, tickmode="linear")
+    fig.update_yaxes(tickvals=tick_vals, ticktext=tick_text, rangemode="tozero")
+    return fig
+
+
 def _select_options(series: pd.Series) -> list[str]:
     return sorted(series.dropna().astype(str).unique().tolist())
 
@@ -626,6 +663,19 @@ def main() -> None:
 
     render_metric_cards(total_cost, total_claims)
     render_filter_summary(selected_years, selected_states, selected_specialties)
+
+    st.divider()
+
+    st.subheader("Total Yearly Spending")
+    yearly_spending = summarize_yearly_spending(filtered_df)
+    st.caption("Total drug cost by year for the current filters.")
+    st.plotly_chart(
+        render_yearly_spending_chart(
+            yearly_spending,
+            _section_title("Total Drug Cost Trend", context=context),
+        ),
+        use_container_width=True,
+    )
 
     st.divider()
 
