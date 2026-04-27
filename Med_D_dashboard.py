@@ -42,6 +42,70 @@ METRIC_COLUMNS = [
 SPECIALTY_ALIASES = {
     "Family Medicine": "Family Practice",
 }
+STATE_NAMES = {
+    "AA": "Armed Forces Americas",
+    "AE": "Armed Forces Europe",
+    "AK": "Alaska",
+    "AL": "Alabama",
+    "AP": "Armed Forces Pacific",
+    "AR": "Arkansas",
+    "AS": "American Samoa",
+    "AZ": "Arizona",
+    "CA": "California",
+    "CO": "Colorado",
+    "CT": "Connecticut",
+    "DC": "District of Columbia",
+    "DE": "Delaware",
+    "FL": "Florida",
+    "FM": "Federated States of Micronesia",
+    "GA": "Georgia",
+    "GU": "Guam",
+    "HI": "Hawaii",
+    "IA": "Iowa",
+    "ID": "Idaho",
+    "IL": "Illinois",
+    "IN": "Indiana",
+    "KS": "Kansas",
+    "KY": "Kentucky",
+    "LA": "Louisiana",
+    "MA": "Massachusetts",
+    "MD": "Maryland",
+    "ME": "Maine",
+    "MI": "Michigan",
+    "MN": "Minnesota",
+    "MO": "Missouri",
+    "MP": "Northern Mariana Islands",
+    "MS": "Mississippi",
+    "MT": "Montana",
+    "NC": "North Carolina",
+    "ND": "North Dakota",
+    "NE": "Nebraska",
+    "NH": "New Hampshire",
+    "NJ": "New Jersey",
+    "NM": "New Mexico",
+    "NV": "Nevada",
+    "NY": "New York",
+    "OH": "Ohio",
+    "OK": "Oklahoma",
+    "OR": "Oregon",
+    "PA": "Pennsylvania",
+    "PR": "Puerto Rico",
+    "RI": "Rhode Island",
+    "SC": "South Carolina",
+    "SD": "South Dakota",
+    "TN": "Tennessee",
+    "TX": "Texas",
+    "UT": "Utah",
+    "VA": "Virginia",
+    "VI": "U.S. Virgin Islands",
+    "VT": "Vermont",
+    "WA": "Washington",
+    "WI": "Wisconsin",
+    "WV": "West Virginia",
+    "WY": "Wyoming",
+    "XX": "Other",
+    "ZZ": "Unknown",
+}
 
 
 st.set_page_config(page_title=APP_TITLE, layout="wide", initial_sidebar_state="collapsed")
@@ -194,8 +258,15 @@ def _normalize_specialties(series: pd.Series) -> pd.Series:
     return specialties.replace(SPECIALTY_ALIASES)
 
 
+def _normalize_states(series: pd.Series) -> pd.Series:
+    states = series.fillna("Unknown").astype(str).str.strip()
+    states = states.mask(states.eq(""), "Unknown")
+    return states.replace(STATE_NAMES)
+
+
 def _normalize_dataset(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
+    df["State"] = _normalize_states(df["State"])
     df["Specialty"] = _normalize_specialties(df["Specialty"])
     normalized = (
         df.groupby(DIMENSION_COLUMNS, dropna=False, as_index=False)[METRIC_COLUMNS]
@@ -225,6 +296,7 @@ def load_raw_files(files: list[Path]) -> pd.DataFrame:
             for col in ["State", "Specialty", "Brand Name", "Generic Name"]:
                 chunk[col] = chunk[col].fillna("Unknown").astype(str).str.strip()
                 chunk.loc[chunk[col].eq(""), col] = "Unknown"
+            chunk["State"] = _normalize_states(chunk["State"])
             chunk["Specialty"] = _normalize_specialties(chunk["Specialty"])
 
             for col in METRIC_COLUMNS:
