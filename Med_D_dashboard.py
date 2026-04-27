@@ -110,6 +110,22 @@ STATE_NAMES = {
 
 st.set_page_config(page_title=APP_TITLE, layout="wide", initial_sidebar_state="collapsed")
 
+st.markdown(
+    """
+    <style>
+    span[data-baseweb="tag"] {
+        background-color: #1a73e8 !important;
+        border-color: #1a73e8 !important;
+        color: white !important;
+    }
+    span[data-baseweb="tag"] span[role="presentation"] {
+        color: white !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 
 METRIC_CARD_CSS = """
 <style>
@@ -139,36 +155,6 @@ div.metric-value {
 }
 div.metric-card-alt div.metric-value {
     color: #1f3442;
-}
-div.filter-summary {
-    margin-top: 0.85rem;
-    margin-bottom: 0.5rem;
-    padding: 0.95rem 1rem;
-    background: #f8fbfc;
-    border: 1px solid #e5eef2;
-    border-radius: 16px;
-}
-div.filter-summary-title {
-    color: #4e5a64;
-    font-size: 0.92rem;
-    font-weight: 700;
-    margin-bottom: 0.55rem;
-}
-div.filter-chip-row {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.45rem;
-}
-span.filter-chip {
-    display: inline-flex;
-    align-items: center;
-    padding: 0.38rem 0.65rem;
-    border-radius: 999px;
-    background: #edf6f3;
-    border: 1px solid #d6e9e1;
-    color: #30584c;
-    font-size: 0.84rem;
-    font-weight: 600;
 }
 </style>
 """
@@ -466,20 +452,23 @@ def summarize_trends(df: pd.DataFrame, grouping: str, selected_drugs: list[str])
     return summary.rename(columns={drug_col: "Drug Name"}).sort_values(["Drug Name", "Year"])
 
 
-def format_tables(df: pd.DataFrame) -> pd.io.formats.style.Styler:
-    currency_cols = [
-        col
-        for col in ["Total Drug Cost", "Cost per Claim", "Cost per 30-Day Fill"]
-        if col in df.columns
-    ]
-    number_cols = [
-        col
-        for col in ["Total Claims", "Total 30-Day Fills", "Total Days Supply"]
-        if col in df.columns
-    ]
-    formats = {col: "${:,.2f}" for col in currency_cols}
-    formats.update({col: "{:,.0f}" for col in number_cols})
-    return df.style.format(formats)
+def format_tables(df: pd.DataFrame) -> pd.DataFrame:
+    display_df = df.reset_index(drop=True).copy()
+
+    if "Total Drug Cost" in display_df.columns:
+        display_df["Total Drug Cost"] = display_df["Total Drug Cost"].apply(
+            lambda x: f"${x / 1e9:.1f}B"
+        )
+
+    for col in ["Cost per Claim", "Cost per 30-Day Fill"]:
+        if col in display_df.columns:
+            display_df[col] = display_df[col].apply(lambda x: f"${x:,.2f}")
+
+    for col in ["Total Claims", "Total 30-Day Fills", "Total Days Supply"]:
+        if col in display_df.columns:
+            display_df[col] = display_df[col].apply(lambda x: f"{int(x):,}")
+
+    return display_df
 
 
 def _filter_context(
@@ -499,54 +488,49 @@ def _filter_context(
     return " | ".join(parts) if parts else "All available records"
 
 
-def _format_filter_chip(label: str, values: list[str] | list[int]) -> str:
-    preview = ", ".join(map(str, values[:4]))
-    suffix = "..." if len(values) > 4 else ""
-    return f'<span class="filter-chip">{label}: {preview}{suffix}</span>'
+def render_metric_cards(filtered_df: pd.DataFrame, drug_col: str) -> None:
+    total_cost = filtered_df["Total Drug Cost"].sum()
+    total_claims = filtered_df["Total Claims"].sum()
+    total_fills = filtered_df["Total 30-Day Fills"].sum()
+    avg_cost_per_claim = total_cost / total_claims if total_claims else 0
+    unique_drugs = filtered_df[drug_col].nunique()
+    years_sorted = sorted(filtered_df["Year"].dropna().astype(int).unique())
 
+    if len(years_sorted) >= 2:
+        cost_first = filtered_df[filtered_df["Year"] == years_sorted[0]]["Total Drug Cost"].sum()
+        cost_last = filtered_df[filtered_df["Year"] == years_sorted[-1]]["Total Drug Cost"].sum()
+        growth_value = (
+            f"{((cost_last - cost_first) / cost_first * 100):+.1f}%"
+            if cost_first
+            else "N/A"
+        )
+        growth_label = "Cost Growth (first->last yr)"
+    else:
+        growth_value = "N/A (select 2+ years)"
+        growth_label = "Cost Growth"
 
-def render_metric_cards(total_cost: float, total_claims: float) -> None:
     cards = [
-        ("Total Drug Cost", f"${total_cost:,.0f}", ""),
-        ("Total Claims", f"{total_claims:,.0f}", "metric-card-alt"),
+        ("Total Drug Cost", f"${total_cost / 1e9:.1f}B", ""),
+        ("Total Claims", f"{total_claims / 1e9:.2f}B", "metric-card-alt"),
+        ("Avg Cost per Claim", f"${avg_cost_per_claim:,.2f}", ""),
+        ("Total 30-Day Fills", f"{total_fills / 1e9:.2f}B", "metric-card-alt"),
+        ("Unique Drugs", f"{unique_drugs:,}", ""),
+        (growth_label, growth_value, "metric-card-alt"),
     ]
-    columns = st.columns(2)
-    for col, (label, value, variant) in zip(columns, cards):
-        with col:
-            st.markdown(
-                f"""
-                <div class="metric-card {variant}">
-                    <div class="metric-label">{label}</div>
-                    <div class="metric-value">{value}</div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
 
-
-def render_filter_summary(years: list[int], states: list[str], specialties: list[str]) -> None:
-    chips = []
-    if years:
-        chips.append(_format_filter_chip("Year", years))
-    if states:
-        chips.append(_format_filter_chip("State", states))
-    if specialties:
-        chips.append(_format_filter_chip("Specialty", specialties))
-
-    if not chips:
-        chips.append('<span class="filter-chip">Global filters: All records</span>')
-
-    st.markdown(
-        f"""
-        <div class="filter-summary">
-            <div class="filter-summary-title">Applied Global Filters</div>
-            <div class="filter-chip-row">
-                {''.join(chips)}
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    for row_cards in (cards[:3], cards[3:]):
+        columns = st.columns(3)
+        for col, (label, value, variant) in zip(columns, row_cards):
+            with col:
+                st.markdown(
+                    f"""
+                    <div class="metric-card {variant}">
+                        <div class="metric-label">{label}</div>
+                        <div class="metric-value">{value}</div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
 
 
 def _section_title(base: str, grouping: str | None = None, context: str | None = None) -> str:
@@ -622,7 +606,7 @@ def render_charts(
     if orientation == "v":
         fig.update_xaxes(categoryorder="array", categoryarray=category_order)
     else:
-        fig.update_yaxes(categoryorder="array", categoryarray=category_order)
+        fig.update_yaxes(categoryorder="total ascending")
 
     axis_max = float(chart_df[y].max() if orientation == "v" else chart_df[x].max())
     tick_vals, tick_text = _build_billions_ticks(axis_max)
@@ -660,9 +644,33 @@ def render_yearly_spending_chart(df: pd.DataFrame, title: str):
         margin=dict(l=20, r=20, t=70, b=20),
         hoverlabel=dict(bgcolor="white"),
     )
-    tick_vals, tick_text = _build_billions_ticks(float(df["Total Drug Cost"].max()))
+    yearly_df = df.reset_index(drop=True)
+    y_min = float(yearly_df["Total Drug Cost"].min())
+    y_max = float(yearly_df["Total Drug Cost"].max())
+    if y_min == y_max:
+        y_padding = y_max * 0.05 if y_max else 1
+        y_range = [max(0, y_min - y_padding), y_max + y_padding]
+    else:
+        y_range = [y_min * 0.95, y_max * 1.05]
+
+    for index, row in yearly_df.iterrows():
+        if index == 0:
+            continue
+        prev = yearly_df.iloc[index - 1]["Total Drug Cost"]
+        curr = row["Total Drug Cost"]
+        if prev:
+            pct = (curr - prev) / prev * 100
+            fig.add_annotation(
+                x=row["Year"],
+                y=curr,
+                text=f"{pct:+.1f}%",
+                showarrow=False,
+                yshift=14,
+                font=dict(size=12, color="#1a73e8"),
+            )
+
     fig.update_xaxes(dtick=1, tickmode="linear")
-    fig.update_yaxes(tickvals=tick_vals, ticktext=tick_text, rangemode="tozero")
+    fig.update_yaxes(range=y_range, tickformat="$,.0f")
     return fig
 
 
@@ -706,6 +714,7 @@ def main() -> None:
             index=0,
             horizontal=True,
         )
+    drug_col = "Brand Name" if grouping == "Brand name" else "Generic Name"
 
     filtered_df = apply_filters(
         df,
@@ -730,17 +739,34 @@ def main() -> None:
         selected_specialties,
     )
 
-    total_cost = filtered_df["Total Drug Cost"].sum()
-    total_claims = filtered_df["Total Claims"].sum()
-
-    render_metric_cards(total_cost, total_claims)
-    render_filter_summary(selected_years, selected_states, selected_specialties)
+    render_metric_cards(filtered_df, drug_col)
 
     st.divider()
 
     st.subheader("Total Yearly Spending")
     yearly_spending = summarize_yearly_spending(filtered_df)
     st.caption("Total drug cost by year for the current filters.")
+    if not yearly_spending.empty:
+        years_sorted = yearly_spending["Year"].tolist()
+        if len(years_sorted) >= 2:
+            first_row = yearly_spending.iloc[0]
+            last_row = yearly_spending.iloc[-1]
+            first_cost = first_row["Total Drug Cost"]
+            last_cost = last_row["Total Drug Cost"]
+            if first_cost:
+                growth_pct = (last_cost - first_cost) / first_cost * 100
+                st.info(
+                    f"**Total spending trend:** Drug costs changed by "
+                    f"**{growth_pct:+.1f}%** from {int(first_row['Year'])} "
+                    f"to {int(last_row['Year'])}."
+                )
+        else:
+            only_year = int(yearly_spending.iloc[0]["Year"])
+            cost_b = yearly_spending.iloc[0]["Total Drug Cost"] / 1e9
+            st.info(
+                f"**Total spending in {only_year}:** The current filters include "
+                f"**${cost_b:.1f}B** in total drug costs."
+            )
     st.plotly_chart(
         render_yearly_spending_chart(
             yearly_spending,
@@ -767,13 +793,37 @@ def main() -> None:
         f"A drug is included if it ranks in the top {top_drug_n} for any selected year. "
         "The chart then shows that drug's full trend across all selected years."
     )
+    if not top_drugs.empty:
+        pivot = top_drugs.pivot(
+            index="Drug Name",
+            columns="Year",
+            values="Total Drug Cost",
+        )
+        years = sorted(pivot.columns)
+        if len(years) >= 2:
+            growth_df = pivot[[years[0], years[-1]]].dropna()
+            growth_df = growth_df[growth_df[years[0]] > 0].copy()
+            if not growth_df.empty:
+                growth_df["growth_pct"] = (
+                    (growth_df[years[-1]] - growth_df[years[0]])
+                    / growth_df[years[0]]
+                    * 100
+                )
+                top_grower = growth_df["growth_pct"].idxmax()
+                growth_val = growth_df.loc[top_grower, "growth_pct"]
+                st.info(
+                    f"**Fastest growing drug:** {top_grower} had the highest cost "
+                    f"increase from {years[0]} to {years[-1]} at "
+                    f"**{growth_val:+.0f}%**."
+                )
     st.plotly_chart(
         render_charts(
             top_drugs,
-            x="Drug Name",
-            y="Total Drug Cost",
+            x="Total Drug Cost",
+            y="Drug Name",
             color="Year",
             title=drug_title,
+            orientation="h",
         ),
         use_container_width=True,
     )
@@ -792,6 +842,7 @@ def main() -> None:
             ]
         ),
         use_container_width=True,
+        hide_index=True,
     )
 
     st.divider()
@@ -809,11 +860,23 @@ def main() -> None:
         "selected year. The chart then shows that specialty's full trend across all "
         "selected years."
     )
+    if not top_specialties.empty:
+        latest_year = top_specialties["Year"].max()
+        top_spec = (
+            top_specialties[top_specialties["Year"] == latest_year]
+            .sort_values("Total Drug Cost", ascending=False)
+            .iloc[0]
+        )
+        cost_b = top_spec["Total Drug Cost"] / 1e9
+        st.info(
+            f"**Highest spending specialty in {int(latest_year)}:** "
+            f"{top_spec['Specialty']} at **${cost_b:.1f}B** in total drug costs."
+        )
     st.plotly_chart(
         render_charts(
             top_specialties,
-            x="Specialty",
-            y="Total Drug Cost",
+            x="Total Drug Cost",
+            y="Specialty",
             color="Year",
             title=_section_title(
                 (
@@ -822,6 +885,7 @@ def main() -> None:
                 ),
                 context=specialty_context,
             ),
+            orientation="h",
         ),
         use_container_width=True,
     )
@@ -840,79 +904,83 @@ def main() -> None:
             ]
         ),
         use_container_width=True,
+        hide_index=True,
     )
 
     st.divider()
 
     st.subheader("Yearly Drug Trend")
-    st.write("Select up to 5 drugs and click Generate yearly trend.")
+    st.markdown(
+        "Select up to 5 drugs to compare their total drug cost trend across all selected years."
+    )
 
-    drug_col = "Brand Name" if grouping == "Brand name" else "Generic Name"
     trend_options = _select_options(filtered_df[drug_col])
+    default_trend_drugs = (
+        filtered_df.groupby(drug_col)["Total Drug Cost"]
+        .sum()
+        .nlargest(3)
+        .index.tolist()
+    )
     selected_trend_drugs = st.multiselect(
         f"Select {grouping.lower()} drugs",
         trend_options,
+        default=default_trend_drugs,
         max_selections=5,
     )
 
-    if st.button("Generate yearly trend"):
-        if not selected_trend_drugs:
-            st.info("Select at least one drug to generate the yearly trend.")
-        elif len(selected_trend_drugs) > 5:
-            st.warning("Select no more than 5 drugs.")
-        else:
-            trend_df = summarize_trends(filtered_df, grouping, selected_trend_drugs)
-            fig = px.line(
-                trend_df,
-                x="Year",
-                y="Total Drug Cost",
-                color="Drug Name",
-                markers=True,
-                template="plotly_white",
-                hover_data={
-                    "Total Drug Cost": ":$,.2f",
-                    "Total Claims": ":,.0f",
-                    "Total 30-Day Fills": ":,.0f",
-                    "Cost per Claim": ":$,.2f",
-                    "Cost per 30-Day Fill": ":$,.2f",
-                },
-                title=_section_title(
-                    "Yearly trend for selected drugs",
-                    grouping=grouping,
-                    context=context,
-                ),
-            )
-            fig.update_layout(
-                title_x=0,
-                legend_title_text="Drug Name",
-                margin=dict(l=20, r=20, t=70, b=20),
-            )
-            tick_vals, tick_text = _build_billions_ticks(float(trend_df["Total Drug Cost"].max()))
-            fig.update_yaxes(tickvals=tick_vals, ticktext=tick_text, rangemode="tozero")
-            st.plotly_chart(fig, use_container_width=True)
-            st.dataframe(
-                format_tables(
-                    trend_df[
-                        [
-                            "Year",
-                            "Drug Name",
-                            "Total Drug Cost",
-                            "Total Claims",
-                            "Total 30-Day Fills",
-                            "Cost per Claim",
-                            "Cost per 30-Day Fill",
-                        ]
+    if selected_trend_drugs:
+        trend_df = summarize_trends(filtered_df, grouping, selected_trend_drugs)
+        fig = px.line(
+            trend_df,
+            x="Year",
+            y="Total Drug Cost",
+            color="Drug Name",
+            markers=True,
+            template="plotly_white",
+            hover_data={
+                "Total Drug Cost": ":$,.2f",
+                "Total Claims": ":,.0f",
+                "Total 30-Day Fills": ":,.0f",
+                "Cost per Claim": ":$,.2f",
+                "Cost per 30-Day Fill": ":$,.2f",
+            },
+            title=_section_title(
+                "Yearly Drug Cost Trend",
+                grouping=grouping,
+                context=context,
+            ),
+        )
+        fig.update_layout(
+            title_x=0,
+            legend_title_text="Drug Name",
+            margin=dict(l=20, r=20, t=70, b=20),
+        )
+        tick_vals, tick_text = _build_billions_ticks(float(trend_df["Total Drug Cost"].max()))
+        fig.update_xaxes(dtick=1, tickmode="linear")
+        fig.update_yaxes(tickvals=tick_vals, ticktext=tick_text, rangemode="tozero")
+        st.plotly_chart(fig, use_container_width=True)
+        st.dataframe(
+            format_tables(
+                trend_df[
+                    [
+                        "Year",
+                        "Drug Name",
+                        "Total Drug Cost",
+                        "Total Claims",
+                        "Total 30-Day Fills",
+                        "Cost per Claim",
+                        "Cost per 30-Day Fill",
                     ]
-                ),
-                use_container_width=True,
-            )
+                ]
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
+    else:
+        st.caption("Select at least one drug above to see its trend.")
 
     st.divider()
-    st.caption("Run with: streamlit run Med_D_dashboard.py")
-    st.caption(
-        "This app is dynamic and must be deployed using Streamlit Cloud or similar. "
-        "GitHub Pages cannot run Python apps."
-    )
+    st.caption("Medicare Part D data | CMS public dataset | 2021-2023")
 
 
 if __name__ == "__main__":
