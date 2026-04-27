@@ -112,49 +112,76 @@ st.set_page_config(page_title=APP_TITLE, layout="wide", initial_sidebar_state="c
 
 st.markdown(
     """
-    <style>
-    span[data-baseweb="tag"] {
-        background-color: #1a73e8 !important;
-        border-color: #1a73e8 !important;
-        color: white !important;
-    }
-    span[data-baseweb="tag"] span[role="presentation"] {
-        color: white !important;
-    }
-    </style>
-    """,
+<style>
+/* Remove default Streamlit top padding */
+.block-container { padding-top: 1.5rem !important; }
+
+/* Style radio buttons as pill toggles */
+div[role="radiogroup"] {
+    display: flex;
+    flex-direction: row;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+div[role="radiogroup"] label {
+    display: inline-flex;
+    align-items: center;
+    padding: 5px 14px;
+    border-radius: 20px;
+    border: 0.5px solid #d0d0d0;
+    background: white;
+    font-size: 13px;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+}
+div[role="radiogroup"] label:has(input:checked) {
+    background: #0a1628;
+    color: #7fb3f5;
+    border-color: #1a3460;
+}
+div[role="radiogroup"] input[type="radio"] { display: none; }
+
+/* Style multiselect chips as blue pills (not red) */
+span[data-baseweb="tag"] {
+    background-color: #1a3460 !important;
+    border-color: #2a4a7a !important;
+}
+span[data-baseweb="tag"] span { color: #7fb3f5 !important; }
+
+/* Hide the default metric delta arrow (we'll add our own) */
+[data-testid="stMetricDelta"] svg { display: none; }
+
+/* Remove Streamlit's default section dividers */
+hr { border-color: #f0f0f0 !important; }
+</style>
+""",
     unsafe_allow_html=True,
 )
 
 
-METRIC_CARD_CSS = """
+DATAFRAME_CSS = """
 <style>
-div.metric-card {
-    background: linear-gradient(180deg, #f4fbf9 0%, #eef7f4 100%);
-    border: 1px solid #d9ebe4;
-    border-radius: 16px;
-    padding: 1rem 1.1rem 0.95rem 1.1rem;
-    min-height: 120px;
-    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+[data-testid="stDataFrame"] table {
+    font-size: 12px !important;
+    border-collapse: collapse;
 }
-div.metric-card.metric-card-alt {
-    background: linear-gradient(180deg, #f7fbfd 0%, #eef5f8 100%);
-    border-color: #dbe7ee;
+[data-testid="stDataFrame"] th {
+    font-size: 11px !important;
+    font-weight: 600 !important;
+    text-transform: uppercase;
+    letter-spacing: .05em;
+    color: #888 !important;
+    background: #fafafa !important;
+    border-bottom: 1px solid #e8e8e8 !important;
+    padding: 8px 10px !important;
 }
-div.metric-label {
-    color: #5f6b76;
-    font-size: 0.92rem;
-    font-weight: 600;
-    margin-bottom: 0.3rem;
+[data-testid="stDataFrame"] td {
+    padding: 7px 10px !important;
+    border-bottom: 0.5px solid #f3f3f3 !important;
+    color: #222 !important;
 }
-div.metric-value {
-    color: #143a31;
-    font-size: 1.95rem;
-    font-weight: 700;
-    line-height: 1.05;
-}
-div.metric-card-alt div.metric-value {
-    color: #1f3442;
+[data-testid="stDataFrame"] tr:hover td {
+    background: #f7f9ff !important;
 }
 </style>
 """
@@ -488,6 +515,99 @@ def _filter_context(
     return " | ".join(parts) if parts else "All available records"
 
 
+def section_heading(text: str) -> None:
+    st.markdown(
+        f"""
+<div style="margin: 28px 0 4px;">
+  <span style="font-size:18px;font-weight:600;color:#0a1628;">{text}</span>
+  <div style="height:2px;width:32px;background:#378add;border-radius:1px;margin-top:5px;"></div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+
+def insight_strip(text: str) -> None:
+    st.markdown(
+        f"""
+<div style="
+    background: #f0f6ff;
+    border-left: 3px solid #378add;
+    border-radius: 0 8px 8px 0;
+    padding: 10px 14px;
+    font-size: 13px;
+    color: #0c447c;
+    margin: 8px 0 14px;
+    line-height: 1.6;
+">{text}</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+
+def chart_card(fig) -> None:
+    with st.container():
+        st.markdown(
+            '<div style="background:white;border:0.5px solid #e8e8e8;'
+            'border-radius:12px;padding:18px 20px;margin-bottom:12px;">',
+            unsafe_allow_html=True,
+        )
+        st.plotly_chart(fig, use_container_width=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+
+
+def style_fig(fig, title: str = "", subtitle: str = ""):
+    """Apply consistent modern styling to all Plotly figures."""
+    title_text = (
+        f"<b>{title}</b><br>"
+        f"<span style='font-size:12px;color:#888;font-weight:400'>{subtitle}</span>"
+        if title
+        else ""
+    )
+    fig.update_layout(
+        title=dict(
+            text=title_text,
+            font=dict(size=15, color="#0a1628"),
+            x=0,
+            xanchor="left",
+            pad=dict(l=0, b=8),
+        ),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(family="Inter, system-ui, sans-serif", size=12, color="#444"),
+        margin=dict(t=60 if title else 20, r=20, b=40, l=0),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="left",
+            x=0,
+            bgcolor="rgba(0,0,0,0)",
+            borderwidth=0,
+            font=dict(size=11),
+        ),
+        xaxis=dict(
+            showgrid=False,
+            zeroline=False,
+            linecolor="#e8e8e8",
+            tickfont=dict(size=11, color="#888"),
+        ),
+        yaxis=dict(
+            gridcolor="#f5f5f5",
+            gridwidth=0.5,
+            zeroline=False,
+            tickfont=dict(size=11, color="#888"),
+        ),
+        colorway=["#185fa5", "#7f77dd", "#1d9e75", "#ef9f27", "#d85a30"],
+        hoverlabel=dict(
+            bgcolor="white",
+            bordercolor="#e8e8e8",
+            font=dict(size=12, color="#111"),
+        ),
+    )
+    return fig
+
+
 def render_metric_cards(filtered_df: pd.DataFrame, drug_col: str) -> None:
     total_cost = filtered_df["Total Drug Cost"].sum()
     total_claims = filtered_df["Total Claims"].sum()
@@ -499,38 +619,63 @@ def render_metric_cards(filtered_df: pd.DataFrame, drug_col: str) -> None:
     if len(years_sorted) >= 2:
         cost_first = filtered_df[filtered_df["Year"] == years_sorted[0]]["Total Drug Cost"].sum()
         cost_last = filtered_df[filtered_df["Year"] == years_sorted[-1]]["Total Drug Cost"].sum()
-        growth_value = (
-            f"{((cost_last - cost_first) / cost_first * 100):+.1f}%"
-            if cost_first
-            else "N/A"
-        )
-        growth_label = "Cost Growth (first->last yr)"
+        growth_pct = (cost_last - cost_first) / cost_first * 100 if cost_first else 0
+        growth_str = f"{growth_pct:+.1f}%"
+        growth_sub = f"${cost_first / 1e9:.0f}B &rarr; ${cost_last / 1e9:.0f}B"
     else:
-        growth_value = "N/A (select 2+ years)"
-        growth_label = "Cost Growth"
+        growth_str = "N/A"
+        growth_sub = "Select 2+ years"
 
-    cards = [
-        ("Total Drug Cost", f"${total_cost / 1e9:.1f}B", ""),
-        ("Total Claims", f"{total_claims / 1e9:.2f}B", "metric-card-alt"),
-        ("Avg Cost per Claim", f"${avg_cost_per_claim:,.2f}", ""),
-        ("Total 30-Day Fills", f"{total_fills / 1e9:.2f}B", "metric-card-alt"),
-        ("Unique Drugs", f"{unique_drugs:,}", ""),
-        (growth_label, growth_value, "metric-card-alt"),
-    ]
+    st.markdown(
+        f"""
+<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:18px 0 6px;">
 
-    for row_cards in (cards[:3], cards[3:]):
-        columns = st.columns(3)
-        for col, (label, value, variant) in zip(columns, row_cards):
-            with col:
-                st.markdown(
-                    f"""
-                    <div class="metric-card {variant}">
-                        <div class="metric-label">{label}</div>
-                        <div class="metric-value">{value}</div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
+  <div style="background:white;border:0.5px solid #e8e8e8;border-radius:10px;padding:14px 16px;position:relative;overflow:hidden;">
+    <div style="position:absolute;top:0;left:0;width:3px;height:100%;background:#378add;border-radius:10px 0 0 10px;"></div>
+    <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:#888;margin-bottom:6px;">Total drug cost</div>
+    <div style="font-size:24px;font-weight:600;color:#111;line-height:1;">${total_cost / 1e9:.1f}B</div>
+    <div style="font-size:12px;color:#1d9e75;margin-top:4px;">All selected years</div>
+  </div>
+
+  <div style="background:white;border:0.5px solid #e8e8e8;border-radius:10px;padding:14px 16px;position:relative;overflow:hidden;">
+    <div style="position:absolute;top:0;left:0;width:3px;height:100%;background:#7f77dd;border-radius:10px 0 0 10px;"></div>
+    <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:#888;margin-bottom:6px;">Total claims</div>
+    <div style="font-size:24px;font-weight:600;color:#111;line-height:1;">{total_claims / 1e9:.2f}B</div>
+    <div style="font-size:12px;color:#888;margin-top:4px;">All selected years</div>
+  </div>
+
+  <div style="background:white;border:0.5px solid #e8e8e8;border-radius:10px;padding:14px 16px;position:relative;overflow:hidden;">
+    <div style="position:absolute;top:0;left:0;width:3px;height:100%;background:#1d9e75;border-radius:10px 0 0 10px;"></div>
+    <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:#888;margin-bottom:6px;">Avg cost per claim</div>
+    <div style="font-size:24px;font-weight:600;color:#111;line-height:1;">${avg_cost_per_claim:,.2f}</div>
+    <div style="font-size:12px;color:#888;margin-top:4px;">Across all drugs</div>
+  </div>
+
+  <div style="background:white;border:0.5px solid #e8e8e8;border-radius:10px;padding:14px 16px;position:relative;overflow:hidden;">
+    <div style="position:absolute;top:0;left:0;width:3px;height:100%;background:#ef9f27;border-radius:10px 0 0 10px;"></div>
+    <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:#888;margin-bottom:6px;">Total 30-day fills</div>
+    <div style="font-size:24px;font-weight:600;color:#111;line-height:1;">{total_fills / 1e9:.2f}B</div>
+    <div style="font-size:12px;color:#888;margin-top:4px;">All selected years</div>
+  </div>
+
+  <div style="background:white;border:0.5px solid #e8e8e8;border-radius:10px;padding:14px 16px;position:relative;overflow:hidden;">
+    <div style="position:absolute;top:0;left:0;width:3px;height:100%;background:#d85a30;border-radius:10px 0 0 10px;"></div>
+    <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:#888;margin-bottom:6px;">Unique drugs</div>
+    <div style="font-size:24px;font-weight:600;color:#111;line-height:1;">{unique_drugs:,}</div>
+    <div style="font-size:12px;color:#888;margin-top:4px;">Current drug grouping</div>
+  </div>
+
+  <div style="background:white;border:0.5px solid #e8e8e8;border-radius:10px;padding:14px 16px;position:relative;overflow:hidden;">
+    <div style="position:absolute;top:0;left:0;width:3px;height:100%;background:#185fa5;border-radius:10px 0 0 10px;"></div>
+    <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:#888;margin-bottom:6px;">Cost growth (first&rarr;last yr)</div>
+    <div style="font-size:24px;font-weight:600;color:#111;line-height:1;">{growth_str}</div>
+    <div style="font-size:12px;color:#888;margin-top:4px;">{growth_sub}</div>
+  </div>
+
+</div>
+""",
+        unsafe_allow_html=True,
+    )
 
 
 def _section_title(base: str, grouping: str | None = None, context: str | None = None) -> str:
@@ -576,6 +721,12 @@ def render_charts(
     chart_df = df.copy()
     if color == "Year":
         chart_df[color] = chart_df[color].astype(str)
+    year_values = sorted(chart_df[color].dropna().unique().tolist()) if color == "Year" else []
+    year_palette = ["#b5d4f4", "#378add", "#0a1628"]
+    color_map = {
+        year: year_palette[index % len(year_palette)]
+        for index, year in enumerate(year_values)
+    }
 
     fig = px.bar(
         chart_df,
@@ -585,7 +736,7 @@ def render_charts(
         barmode="group",
         orientation=orientation,
         template="plotly_white",
-        color_discrete_sequence=px.colors.qualitative.Safe,
+        color_discrete_map=color_map if color == "Year" else None,
         hover_data={
             "Total Drug Cost": ":$,.2f",
             "Total Claims": ":,.0f",
@@ -593,14 +744,9 @@ def render_charts(
             "Cost per Claim": ":$,.2f",
             "Cost per 30-Day Fill": ":$,.2f",
         },
-        title=title,
     )
-    fig.update_layout(
-        legend_title_text=color,
-        title_x=0,
-        margin=dict(l=20, r=20, t=70, b=20),
-        hoverlabel=dict(bgcolor="white"),
-    )
+    fig = style_fig(fig, title=title)
+    fig.update_layout(legend_title_text=color)
     category_axis = x if orientation == "v" else y
     category_order = chart_df[category_axis].drop_duplicates().tolist()
     if orientation == "v":
@@ -630,20 +776,15 @@ def render_yearly_spending_chart(df: pd.DataFrame, title: str):
             "Cost per Claim": ":$,.2f",
             "Cost per 30-Day Fill": ":$,.2f",
         },
-        title=title,
     )
     fig.update_traces(
         mode="lines+markers",
-        line=dict(color="#2563eb", width=3),
-        marker=dict(size=9, color="#2563eb"),
-        fillcolor="rgba(37, 99, 235, 0.16)",
+        line=dict(color="#185fa5", width=3),
+        marker=dict(size=9, color="#185fa5"),
+        fillcolor="rgba(181, 212, 244, 0.42)",
     )
-    fig.update_layout(
-        title_x=0,
-        showlegend=False,
-        margin=dict(l=20, r=20, t=70, b=20),
-        hoverlabel=dict(bgcolor="white"),
-    )
+    fig = style_fig(fig, title=title)
+    fig.update_layout(showlegend=False)
     yearly_df = df.reset_index(drop=True)
     y_min = float(yearly_df["Total Drug Cost"].min())
     y_max = float(yearly_df["Total Drug Cost"].max())
@@ -666,7 +807,7 @@ def render_yearly_spending_chart(df: pd.DataFrame, title: str):
                 text=f"{pct:+.1f}%",
                 showarrow=False,
                 yshift=14,
-                font=dict(size=12, color="#1a73e8"),
+                font=dict(size=12, color="#185fa5"),
             )
 
     fig.update_xaxes(dtick=1, tickmode="linear")
@@ -679,9 +820,32 @@ def _select_options(series: pd.Series) -> list[str]:
 
 
 def main() -> None:
-    st.markdown(METRIC_CARD_CSS, unsafe_allow_html=True)
-    st.title(APP_TITLE)
-    st.caption(APP_SUBTITLE)
+    st.markdown(
+        """
+<div style="
+    background: #0a1628;
+    padding: 24px 28px 22px;
+    border-radius: 12px;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+">
+  <div>
+    <div style="font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:#5b8dd9;margin-bottom:6px;">
+      CMS Public Data
+    </div>
+    <div style="font-size:26px;font-weight:600;color:#f0f4ff;line-height:1.2;">
+      Medicare Part D Prescribing
+    </div>
+    <div style="font-size:13px;color:#7a90b8;margin-top:5px;">
+      Interactive analysis of drug costs, claims, and specialty patterns &middot; 2021&ndash;2023
+    </div>
+  </div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
 
     try:
         df = load_or_build_dataset()
@@ -699,7 +863,6 @@ def main() -> None:
     state_options = _select_options(df["State"])
     specialty_options = _select_options(df["Specialty"])
 
-    st.markdown("#### Filters")
     filter_cols = st.columns([1.1, 1.7, 2.6, 1.3])
     with filter_cols[0]:
         selected_years = st.multiselect("Year", year_options, default=year_options)
@@ -743,7 +906,7 @@ def main() -> None:
 
     st.divider()
 
-    st.subheader("Total Yearly Spending")
+    section_heading("Total yearly spending")
     yearly_spending = summarize_yearly_spending(filtered_df)
     st.caption("Total drug cost by year for the current filters.")
     if not yearly_spending.empty:
@@ -755,36 +918,34 @@ def main() -> None:
             last_cost = last_row["Total Drug Cost"]
             if first_cost:
                 growth_pct = (last_cost - first_cost) / first_cost * 100
-                st.info(
-                    f"**Total spending trend:** Drug costs changed by "
-                    f"**{growth_pct:+.1f}%** from {int(first_row['Year'])} "
+                insight_strip(
+                    f"<strong>Total spending trend:</strong> Drug costs changed by "
+                    f"<strong>{growth_pct:+.1f}%</strong> from {int(first_row['Year'])} "
                     f"to {int(last_row['Year'])}."
                 )
         else:
             only_year = int(yearly_spending.iloc[0]["Year"])
             cost_b = yearly_spending.iloc[0]["Total Drug Cost"] / 1e9
-            st.info(
-                f"**Total spending in {only_year}:** The current filters include "
-                f"**${cost_b:.1f}B** in total drug costs."
+            insight_strip(
+                f"<strong>Total spending in {only_year}:</strong> The current filters "
+                f"include <strong>${cost_b:.1f}B</strong> in total drug costs."
             )
-    st.plotly_chart(
-        render_yearly_spending_chart(
-            yearly_spending,
-            _section_title("Total Drug Cost Trend", context=context),
-        ),
-        use_container_width=True,
+    yearly_fig = render_yearly_spending_chart(
+        yearly_spending,
+        _section_title("Total drug cost trend", context=context),
     )
+    chart_card(yearly_fig)
 
     st.divider()
 
-    st.subheader("Annual Top Drugs")
+    section_heading("Annual top drugs")
     top_drug_n = render_top_n_control(
         "Show drugs appearing in each year's top:",
         "top_drug_n",
     )
     top_drugs = summarize_top_drugs(filtered_df, grouping, top_drug_n)
     drug_title = _section_title(
-        f"Drugs Appearing in the Annual Top {top_drug_n} by Total Drug Cost",
+        f"Top drugs by total cost",
         grouping=grouping,
         context=context,
     )
@@ -811,22 +972,21 @@ def main() -> None:
                 )
                 top_grower = growth_df["growth_pct"].idxmax()
                 growth_val = growth_df.loc[top_grower, "growth_pct"]
-                st.info(
-                    f"**Fastest growing drug:** {top_grower} had the highest cost "
+                insight_strip(
+                    f"<strong>Fastest growing drug:</strong> {top_grower} had the highest cost "
                     f"increase from {years[0]} to {years[-1]} at "
-                    f"**{growth_val:+.0f}%**."
+                    f"<strong>{growth_val:+.0f}%</strong>."
                 )
-    st.plotly_chart(
-        render_charts(
-            top_drugs,
-            x="Total Drug Cost",
-            y="Drug Name",
-            color="Year",
-            title=drug_title,
-            orientation="h",
-        ),
-        use_container_width=True,
+    drug_fig = render_charts(
+        top_drugs,
+        x="Total Drug Cost",
+        y="Drug Name",
+        color="Year",
+        title=drug_title,
+        orientation="h",
     )
+    chart_card(drug_fig)
+    st.markdown(DATAFRAME_CSS, unsafe_allow_html=True)
     st.dataframe(
         format_tables(
             top_drugs[
@@ -847,7 +1007,7 @@ def main() -> None:
 
     st.divider()
 
-    st.subheader("Annual Top Specialties")
+    section_heading("Annual top specialties")
     top_specialty_n = render_top_n_control(
         "Show specialties appearing in each year's top:",
         "top_specialty_n",
@@ -868,27 +1028,22 @@ def main() -> None:
             .iloc[0]
         )
         cost_b = top_spec["Total Drug Cost"] / 1e9
-        st.info(
-            f"**Highest spending specialty in {int(latest_year)}:** "
-            f"{top_spec['Specialty']} at **${cost_b:.1f}B** in total drug costs."
+        insight_strip(
+            f"<strong>Highest spending specialty in {int(latest_year)}:</strong> "
+            f"{top_spec['Specialty']} at <strong>${cost_b:.1f}B</strong> in total drug costs."
         )
-    st.plotly_chart(
-        render_charts(
-            top_specialties,
-            x="Total Drug Cost",
-            y="Specialty",
-            color="Year",
-            title=_section_title(
-                (
-                    "Specialties Appearing in the Annual Top "
-                    f"{top_specialty_n} by Total Drug Cost"
-                ),
-                context=specialty_context,
-            ),
-            orientation="h",
+    specialty_fig = render_charts(
+        top_specialties,
+        x="Total Drug Cost",
+        y="Specialty",
+        color="Year",
+        title=_section_title(
+            f"Top specialties by total cost",
+            context=specialty_context,
         ),
-        use_container_width=True,
+        orientation="h",
     )
+    chart_card(specialty_fig)
     st.dataframe(
         format_tables(
             top_specialties[
@@ -909,7 +1064,7 @@ def main() -> None:
 
     st.divider()
 
-    st.subheader("Yearly Drug Trend")
+    section_heading("Yearly drug trend")
     st.markdown(
         "Select up to 5 drugs to compare their total drug cost trend across all selected years."
     )
@@ -944,21 +1099,20 @@ def main() -> None:
                 "Cost per Claim": ":$,.2f",
                 "Cost per 30-Day Fill": ":$,.2f",
             },
+        )
+        fig = style_fig(
+            fig,
             title=_section_title(
-                "Yearly Drug Cost Trend",
+                "Yearly drug cost trend",
                 grouping=grouping,
                 context=context,
             ),
         )
-        fig.update_layout(
-            title_x=0,
-            legend_title_text="Drug Name",
-            margin=dict(l=20, r=20, t=70, b=20),
-        )
+        fig.update_layout(legend_title_text="Drug Name")
         tick_vals, tick_text = _build_billions_ticks(float(trend_df["Total Drug Cost"].max()))
         fig.update_xaxes(dtick=1, tickmode="linear")
         fig.update_yaxes(tickvals=tick_vals, ticktext=tick_text, rangemode="tozero")
-        st.plotly_chart(fig, use_container_width=True)
+        chart_card(fig)
         st.dataframe(
             format_tables(
                 trend_df[
@@ -980,7 +1134,24 @@ def main() -> None:
         st.caption("Select at least one drug above to see its trend.")
 
     st.divider()
-    st.caption("Medicare Part D data | CMS public dataset | 2021-2023")
+    st.markdown(
+        """
+<div style="
+    margin-top: 48px;
+    padding-top: 16px;
+    border-top: 0.5px solid #e8e8e8;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 12px;
+    color: #aaa;
+">
+  <span>Medicare Part D &middot; CMS public dataset &middot; 2021&ndash;2023</span>
+  <span>Data refreshed annually</span>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
 
 
 if __name__ == "__main__":
