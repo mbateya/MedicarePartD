@@ -426,7 +426,7 @@ def load_or_build_dataset() -> pd.DataFrame:
 def render_top_n_control(label: str, key: str) -> int:
     selection = st.segmented_control(
         label,
-        options=[5, 10, 20],
+        options=[5, 10],
         default=10,
         key=key,
     )
