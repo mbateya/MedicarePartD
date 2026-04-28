@@ -789,6 +789,39 @@ def _build_billions_ticks(max_value: float) -> tuple[list[float], list[str]]:
     return tick_vals, tick_text
 
 
+def render_treemap(df: pd.DataFrame, name_col: str, top_n: int, title: str):
+    totals = (
+        df.groupby(name_col, dropna=False)["Total Drug Cost"]
+        .sum()
+        .reset_index()
+        .sort_values("Total Drug Cost", ascending=False)
+    )
+    top = totals.head(top_n).copy()
+    others_cost = totals.iloc[top_n:]["Total Drug Cost"].sum()
+    if others_cost > 0:
+        top = pd.concat(
+            [top, pd.DataFrame({name_col: ["Others"], "Total Drug Cost": [others_cost]})],
+            ignore_index=True,
+        )
+    palette = ["#185fa5", "#378add", "#b5d4f4", "#7f77dd", "#1d9e75", "#ef9f27", "#d85a30"]
+    fig = px.treemap(
+        top,
+        path=[name_col],
+        values="Total Drug Cost",
+        color=name_col,
+        color_discrete_map={"Others": "#cccccc"},
+        color_discrete_sequence=palette,
+    )
+    fig.update_traces(
+        texttemplate="<b>%{label}</b><br>%{value:$,.0f}",
+        textfont=dict(size=12),
+        hovertemplate="<b>%{label}</b><br>Total Drug Cost: %{value:$,.0f}<extra></extra>",
+    )
+    fig = style_fig(fig, title=title)
+    fig.update_layout(showlegend=False, margin=dict(t=60, r=10, b=10, l=10))
+    return fig
+
+
 def render_charts(
     df: pd.DataFrame,
     x: str,
@@ -1020,10 +1053,16 @@ def main() -> None:
     st.divider()
 
     section_heading("Annual top drugs")
-    top_drug_n = render_top_n_control(
-        "Show drugs appearing in each year's top:",
-        "top_drug_n",
-    )
+    drug_ctrl_cols = st.columns([3, 1])
+    with drug_ctrl_cols[0]:
+        top_drug_n = render_top_n_control(
+            "Show drugs appearing in each year's top:",
+            "top_drug_n",
+        )
+    with drug_ctrl_cols[1]:
+        drug_chart_type = st.segmented_control(
+            "Chart type", options=["Bar", "Treemap"], default="Bar", key="drug_chart_type"
+        )
     top_drugs = summarize_top_drugs(filtered_df, grouping, top_drug_n)
     drug_title = _section_title(
         f"Top drugs by total cost",
@@ -1058,14 +1097,17 @@ def main() -> None:
                     f"increase from {years[0]} to {years[-1]} at "
                     f"<strong>{growth_val:+.0f}%</strong>."
                 )
-    drug_fig = render_charts(
-        top_drugs,
-        x="Total Drug Cost",
-        y="Drug Name",
-        color="Year",
-        title=drug_title,
-        orientation="h",
-    )
+    if drug_chart_type == "Treemap":
+        drug_fig = render_treemap(filtered_df, drug_col, top_drug_n, drug_title)
+    else:
+        drug_fig = render_charts(
+            top_drugs,
+            x="Total Drug Cost",
+            y="Drug Name",
+            color="Year",
+            title=drug_title,
+            orientation="h",
+        )
     chart_card(drug_fig)
     st.markdown(DATAFRAME_CSS, unsafe_allow_html=True)
     st.dataframe(
@@ -1089,12 +1131,19 @@ def main() -> None:
     st.divider()
 
     section_heading("Annual top specialties")
-    top_specialty_n = render_top_n_control(
-        "Show specialties appearing in each year's top:",
-        "top_specialty_n",
-    )
+    spec_ctrl_cols = st.columns([3, 1])
+    with spec_ctrl_cols[0]:
+        top_specialty_n = render_top_n_control(
+            "Show specialties appearing in each year's top:",
+            "top_specialty_n",
+        )
+    with spec_ctrl_cols[1]:
+        specialty_chart_type = st.segmented_control(
+            "Chart type", options=["Bar", "Treemap"], default="Bar", key="specialty_chart_type"
+        )
     top_specialties = summarize_top_specialties(specialty_section_df, top_specialty_n)
     specialty_context = _filter_context(selected_years, selected_states, [])
+    specialty_title = _section_title("Top specialties by total cost", context=specialty_context)
     st.caption(specialty_context)
     st.caption(
         f"A specialty is included if it ranks in the top {top_specialty_n} for any "
@@ -1113,17 +1162,17 @@ def main() -> None:
             f"<strong>Highest spending specialty in {int(latest_year)}:</strong> "
             f"{top_spec['Specialty']} at <strong>${cost_b:.1f}B</strong> in total drug costs."
         )
-    specialty_fig = render_charts(
-        top_specialties,
-        x="Total Drug Cost",
-        y="Specialty",
-        color="Year",
-        title=_section_title(
-            f"Top specialties by total cost",
-            context=specialty_context,
-        ),
-        orientation="h",
-    )
+    if specialty_chart_type == "Treemap":
+        specialty_fig = render_treemap(specialty_section_df, "Specialty", top_specialty_n, specialty_title)
+    else:
+        specialty_fig = render_charts(
+            top_specialties,
+            x="Total Drug Cost",
+            y="Specialty",
+            color="Year",
+            title=specialty_title,
+            orientation="h",
+        )
     chart_card(specialty_fig)
     st.dataframe(
         format_tables(
