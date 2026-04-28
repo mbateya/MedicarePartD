@@ -671,6 +671,12 @@ def style_fig(fig, title: str = "", subtitle: str = ""):
     return fig
 
 
+def _fmt_cost(value: float) -> str:
+    if value >= 1e9:
+        return f"${value / 1e9:.1f}B"
+    return f"${value / 1e6:.1f}M"
+
+
 def render_metric_cards(filtered_df: pd.DataFrame, drug_col: str) -> None:
     total_cost = filtered_df["Total Drug Cost"].sum()
     total_claims = filtered_df["Total Claims"].sum()
@@ -684,7 +690,7 @@ def render_metric_cards(filtered_df: pd.DataFrame, drug_col: str) -> None:
         cost_last = filtered_df[filtered_df["Year"] == years_sorted[-1]]["Total Drug Cost"].sum()
         growth_pct = (cost_last - cost_first) / cost_first * 100 if cost_first else 0
         growth_str = f"{growth_pct:+.1f}%"
-        growth_sub = f"${cost_first / 1e9:.0f}B &rarr; ${cost_last / 1e9:.0f}B"
+        growth_sub = f"{_fmt_cost(cost_first)} &rarr; {_fmt_cost(cost_last)}"
     else:
         growth_str = "N/A"
         growth_sub = "Select 2+ years"
@@ -696,7 +702,7 @@ def render_metric_cards(filtered_df: pd.DataFrame, drug_col: str) -> None:
   <div style="background:white;border:0.5px solid #e8e8e8;border-radius:10px;padding:14px 16px;position:relative;overflow:hidden;">
     <div style="position:absolute;top:0;left:0;width:3px;height:100%;background:#378add;border-radius:10px 0 0 10px;"></div>
     <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:#888;margin-bottom:6px;">Total drug cost</div>
-    <div style="font-size:24px;font-weight:600;color:#111;line-height:1;">${total_cost / 1e9:.1f}B</div>
+    <div style="font-size:24px;font-weight:600;color:#111;line-height:1;">{_fmt_cost(total_cost)}</div>
     <div style="font-size:12px;color:#1d9e75;margin-top:4px;">All selected years</div>
   </div>
 
@@ -1188,67 +1194,6 @@ def main() -> None:
             use_container_width=True,
             hide_index=True,
         )
-
-    st.divider()
-
-    section_heading("Top prescribers by drug")
-    st.markdown(
-        "Select a brand-name drug to see which prescribers account for the most spending. "
-        "Year, state, and specialty filters above are applied."
-    )
-
-    provider_summary = load_provider_summary()
-    drug_options = sorted(provider_summary["Brand Name"].dropna().unique().tolist())
-    selected_provider_drug = st.selectbox(
-        "Select a drug (brand name)",
-        options=[""] + drug_options,
-        index=0,
-        key="provider_drug_select",
-    )
-
-    if selected_provider_drug:
-        provider_top_n = render_top_n_control(
-            "Show providers appearing in each year's top:",
-            "provider_top_n",
-        )
-        provider_df = summarize_top_providers(
-            provider_summary,
-            selected_provider_drug,
-            provider_top_n,
-            years=selected_years or None,
-            states=selected_states or None,
-            specialties=selected_specialties or None,
-        )
-        if not provider_df.empty:
-            provider_fig = render_charts(
-                provider_df,
-                x="Total Drug Cost",
-                y="Prescriber Name",
-                color="Year",
-                title=_section_title(
-                    f"Top prescribers — {selected_provider_drug}",
-                    context=context,
-                ),
-                orientation="h",
-            )
-            provider_fig.update_layout(margin=dict(l=220))
-            chart_card(provider_fig)
-            st.markdown(DATAFRAME_CSS, unsafe_allow_html=True)
-            st.dataframe(
-                format_tables(
-                    provider_df[[
-                        "Year",
-                        "Prescriber Name",
-                        "Total Drug Cost",
-                        "Total Claims",
-                        "Total 30-Day Fills",
-                        "Cost per Claim",
-                        "Cost per 30-Day Fill",
-                    ]]
-                ),
-                use_container_width=True,
-                hide_index=True,
-            )
 
     st.divider()
     st.markdown(
