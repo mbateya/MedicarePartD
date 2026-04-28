@@ -671,16 +671,20 @@ def style_fig(fig, title: str = "", subtitle: str = ""):
     return fig
 
 
+def _fmt_num(value: float, unit: float) -> str:
+    return f"{value / unit:.2f}".rstrip("0").rstrip(".")
+
+
 def _fmt_cost(value: float) -> str:
     if value >= 1e9:
-        return f"${value / 1e9:.1f}B"
-    return f"${value / 1e6:.1f}M"
+        return f"${_fmt_num(value, 1e9)}B"
+    return f"${_fmt_num(value, 1e6)}M"
 
 
 def _fmt_count(value: float) -> str:
     if value >= 1e9:
-        return f"{value / 1e9:.2f}B"
-    return f"{value / 1e6:.1f}M"
+        return f"{_fmt_num(value, 1e9)}B"
+    return f"{_fmt_num(value, 1e6)}M"
 
 
 def render_metric_cards(filtered_df: pd.DataFrame, drug_col: str) -> None:
