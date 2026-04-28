@@ -1267,6 +1267,15 @@ def _pair_chat_messages(messages: list[dict]) -> list[tuple[dict, dict | None]]:
     return pairs
 
 
+@st.dialog("Ask AI", width="large")
+def _open_chatbot_dialog() -> None:
+    render_chatbot()
+
+
+def _escape_dollars(text: str) -> str:
+    return re.sub(r"(?<!\\)\$", r"\\$", text)
+
+
 def render_chatbot() -> None:
     st.markdown(
         "Ask a question about Medicare Part D prescribing. The bot writes SQL "
@@ -1341,7 +1350,7 @@ def render_chatbot() -> None:
             st.markdown(user_msg["content"])
         if assistant_msg is not None:
             with st.chat_message("assistant"):
-                st.markdown(assistant_msg["content"])
+                st.markdown(_escape_dollars(assistant_msg["content"]))
                 if assistant_msg.get("sql"):
                     with st.expander("Show SQL"):
                         st.code(assistant_msg["sql"], language="sql")
@@ -1389,12 +1398,12 @@ def main() -> None:
 
     header_extra_cols = st.columns([6, 1])
     with header_extra_cols[1]:
-        with st.popover(
+        if st.button(
             "Ask AI",
             icon=":material/auto_awesome:",
             use_container_width=True,
         ):
-            render_chatbot()
+            _open_chatbot_dialog()
 
     year_options = sorted(df["Year"].dropna().astype(int).unique().tolist())
     state_options = _select_options(df["State"])
