@@ -4,11 +4,14 @@ import re
 from pathlib import Path
 from typing import Iterable
 
+import duckdb
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import streamlit as st
+from google import genai
+from google.genai import types
 
 
 APP_TITLE = "Medicare Part D Prescribing Dashboard"
@@ -110,6 +113,14 @@ STATE_NAMES = {
     "WY": "Wyoming",
     "XX": "Other",
     "ZZ": "Unknown",
+}
+STATE_NAME_TO_CODE = {v: k for k, v in STATE_NAMES.items()}
+USA_MAP_STATE_CODES = {
+    "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "DC", "FL", "GA", "HI",
+    "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD", "MA", "MI", "MN",
+    "MS", "MO", "MT", "NE", "NV", "NH", "NJ", "NM", "NY", "NC", "ND", "OH",
+    "OK", "OR", "PA", "RI", "SC", "SD", "TN", "TX", "UT", "VT", "VA", "WA",
+    "WV", "WI", "WY",
 }
 
 
@@ -561,7 +572,7 @@ def format_tables(df: pd.DataFrame) -> pd.io.formats.style.Styler:
     formats = {col: "${:,.2f}" for col in currency_cols}
     formats.update({col: "{:,.0f}" for col in number_cols})
     if "Total Drug Cost" in df.columns:
-        formats["Total Drug Cost"] = lambda x: f"${x/1e9:.1f}B"
+        formats["Total Drug Cost"] = fmt_currency
     return df.style.format(formats)
 
 
@@ -815,6 +826,8 @@ def render_treemap(df: pd.DataFrame, name_col: str, top_n: int, title: str):
     top_abbrev = [fmt_currency(v) for v in top["Total Drug Cost"]]
 
     if others_cost > 0:
+        others_count = len(totals) - top_n
+        others_label = f"Others ({others_count} more)"
         named_total = top["Total Drug Cost"].sum()
         grand_total = named_total + others_cost
         named_frac = round(named_total / grand_total, 4)
@@ -844,7 +857,7 @@ def render_treemap(df: pd.DataFrame, name_col: str, top_n: int, title: str):
         )
         fig.add_trace(
             go.Treemap(
-                labels=["Others"],
+                labels=[others_label],
                 parents=[""],
                 values=[others_cost],
                 customdata=[fmt_currency(others_cost)],
@@ -873,6 +886,75 @@ def render_treemap(df: pd.DataFrame, name_col: str, top_n: int, title: str):
 
     fig = style_fig(fig, title=title)
     fig.update_layout(showlegend=False, margin=dict(t=60, r=10, b=10, l=10))
+    return fig
+
+
+def render_state_choropleth(df: pd.DataFrame, title: str):
+    state_totals = (
+        df.groupby("State", dropna=False)["Total Drug Cost"]
+        .sum()
+        .reset_index()
+    )
+    state_totals["state_code"] = state_totals["State"].map(STATE_NAME_TO_CODE)
+    map_df = state_totals[state_totals["state_code"].isin(USA_MAP_STATE_CODES)].copy()
+
+    if map_df.empty:
+        fig = go.Figure()
+        fig = style_fig(fig, title=title)
+        fig.add_annotation(
+            text="No US state data for current filters",
+            showarrow=False,
+            font=dict(size=13, color="#888"),
+        )
+        return fig
+
+    map_df["cost_label"] = map_df["Total Drug Cost"].apply(fmt_currency)
+
+    fig = px.choropleth(
+        map_df,
+        locations="state_code",
+        locationmode="USA-states",
+        color="Total Drug Cost",
+        scope="usa",
+        color_continuous_scale=[
+            [0.0, "#f0f6ff"],
+            [0.5, "#5b8dd9"],
+            [1.0, "#0a1628"],
+        ],
+        hover_name="State",
+        custom_data=["cost_label"],
+    )
+    fig.update_traces(
+        hovertemplate="<b>%{hovertext}</b><br>Total Drug Cost: %{customdata[0]}<extra></extra>",
+        marker_line_color="white",
+        marker_line_width=0.5,
+    )
+
+    max_val = float(map_df["Total Drug Cost"].max())
+    cb_ticks = [max_val * i / 4 for i in range(5)]
+    cb_labels = [fmt_currency(v) for v in cb_ticks]
+
+    fig = style_fig(fig, title=title)
+    fig.update_layout(
+        coloraxis_colorbar=dict(
+            title=dict(text="", font=dict(size=11)),
+            tickvals=cb_ticks,
+            ticktext=cb_labels,
+            tickfont=dict(size=10, color="#888"),
+            thickness=10,
+            len=0.7,
+            outlinewidth=0,
+        ),
+        geo=dict(
+            bgcolor="rgba(0,0,0,0)",
+            lakecolor="rgba(0,0,0,0)",
+            landcolor="#fafafa",
+            subunitcolor="white",
+            showlakes=False,
+            showcoastlines=False,
+        ),
+        margin=dict(t=60, r=10, b=10, l=10),
+    )
     return fig
 
 
@@ -986,6 +1068,261 @@ def _select_options(series: pd.Series) -> list[str]:
     return sorted(series.dropna().astype(str).unique().tolist())
 
 
+CHATBOT_MODEL = "gemini-2.5-flash"
+CHATBOT_MAX_TOOL_CALLS = 5
+CHATBOT_ROW_LIMIT = 50
+
+CHATBOT_SYSTEM_PROMPT = """\
+You are a data analyst for the Medicare Part D Prescribing dashboard. \
+Answer the user's questions by querying a DuckDB table called `medicare` via the run_sql tool.
+
+Schema of `medicare` (years 2021-2023):
+  Year (INTEGER) — 2021, 2022, or 2023
+  State (VARCHAR) — full state name e.g. 'California'. Some rows are 'Unknown' or US territories.
+  Specialty (VARCHAR) — prescriber specialty e.g. 'Cardiology', 'Internal Medicine'.
+    Note: 'Interventional Cardiology' is grouped into 'Cardiology';
+    'Medical Oncology' is grouped into 'Hematology-Oncology'.
+  "Brand Name" (VARCHAR) — drug brand name (case-sensitive)
+  "Generic Name" (VARCHAR) — drug generic name (case-sensitive)
+  "Total Drug Cost" (DOUBLE) — total cost in USD
+  "Total Claims" (BIGINT)
+  "Total 30-Day Fills" (DOUBLE)
+  "Cost per Claim" (DOUBLE)
+  "Cost per 30-Day Fill" (DOUBLE)
+
+Guidelines:
+- Always wrap multi-word column names in double quotes.
+- Use ILIKE with '%pattern%' for partial drug or specialty matches.
+- LIMIT your final SELECT to 50 rows.
+- After receiving query results, write a 1-3 sentence answer in plain English.
+- If a query returns no rows, suggest a refinement (e.g. broader ILIKE).
+- Do not invent column names or values that aren't in the schema above.
+"""
+
+RUN_SQL_DECLARATION = types.FunctionDeclaration(
+    name="run_sql",
+    description="Execute a read-only SELECT or WITH query against the `medicare` table and return the rows.",
+    parameters=types.Schema(
+        type=types.Type.OBJECT,
+        properties={
+            "sql": types.Schema(
+                type=types.Type.STRING,
+                description="A read-only SQL query (SELECT or WITH only)",
+            ),
+        },
+        required=["sql"],
+    ),
+)
+
+
+@st.cache_resource(show_spinner=False)
+def _get_chatbot_client() -> genai.Client | None:
+    api_key = st.secrets.get("GEMINI_API_KEY") if hasattr(st, "secrets") else None
+    if not api_key:
+        return None
+    return genai.Client(api_key=api_key)
+
+
+@st.cache_resource(show_spinner=False)
+def _get_duckdb_view():
+    con = duckdb.connect(":memory:")
+    con.execute(
+        f"CREATE VIEW medicare AS SELECT * FROM read_parquet('{PROCESSED_PATH.as_posix()}')"
+    )
+    return con
+
+
+_FORBIDDEN_SQL_KEYWORDS = (
+    "INSERT", "UPDATE", "DELETE", "DROP", "CREATE", "ALTER",
+    "ATTACH", "DETACH", "COPY", "PRAGMA", "EXPORT", "IMPORT",
+)
+
+
+def _execute_sql(sql: str) -> dict:
+    sql_clean = sql.strip().rstrip(";").strip()
+    if not sql_clean:
+        return {"error": "Empty query."}
+    upper = sql_clean.upper()
+    if not (upper.startswith("SELECT") or upper.startswith("WITH")):
+        return {"error": "Only SELECT or WITH queries are permitted."}
+    for kw in _FORBIDDEN_SQL_KEYWORDS:
+        if f" {kw} " in f" {upper} " or f" {kw}(" in f" {upper}(":
+            return {"error": f"The {kw} keyword is not permitted."}
+    try:
+        result = _get_duckdb_view().execute(sql_clean).fetchdf()
+    except Exception as exc:
+        return {"error": f"SQL error: {exc}"}
+
+    total_rows = len(result)
+    if total_rows == 0:
+        return {"row_count": 0, "rows": []}
+    truncated = total_rows > CHATBOT_ROW_LIMIT
+    preview = result.head(CHATBOT_ROW_LIMIT)
+    return {
+        "row_count": total_rows,
+        "truncated": truncated,
+        "rows": preview.astype(object).where(preview.notna(), None).to_dict(orient="records"),
+    }
+
+
+def _is_quota_error(exc: Exception) -> bool:
+    msg = str(exc).upper()
+    if "RESOURCE_EXHAUSTED" in msg or "RATE_LIMIT_EXCEEDED" in msg:
+        return True
+    code = getattr(exc, "code", None) or getattr(exc, "status_code", None)
+    return code == 429
+
+
+def _run_chatbot_turn(client: genai.Client, history: list) -> tuple[str, str | None]:
+    """Run the model + tool loop until we get a text answer. Returns (answer, sql_used)."""
+    contents = list(history)
+    sql_used: str | None = None
+    config = types.GenerateContentConfig(
+        system_instruction=CHATBOT_SYSTEM_PROMPT,
+        tools=[types.Tool(function_declarations=[RUN_SQL_DECLARATION])],
+    )
+
+    for _ in range(CHATBOT_MAX_TOOL_CALLS):
+        response = client.models.generate_content(
+            model=CHATBOT_MODEL,
+            contents=contents,
+            config=config,
+        )
+        candidate = response.candidates[0]
+        function_call = None
+        text_parts: list[str] = []
+        for part in candidate.content.parts or []:
+            if getattr(part, "function_call", None):
+                function_call = part.function_call
+            elif getattr(part, "text", None):
+                text_parts.append(part.text)
+
+        if function_call is None:
+            answer = "\n".join(t for t in text_parts if t).strip()
+            return (answer or "(no response)", sql_used)
+
+        sql = (function_call.args or {}).get("sql", "")
+        sql_used = sql
+        result = _execute_sql(sql)
+        contents.append(candidate.content)
+        contents.append(
+            types.Content(
+                role="user",
+                parts=[
+                    types.Part.from_function_response(
+                        name="run_sql",
+                        response=result,
+                    )
+                ],
+            )
+        )
+
+    return (
+        "I wasn't able to land on an answer within my query budget. "
+        "Try rephrasing or narrowing the question.",
+        sql_used,
+    )
+
+
+def _pair_chat_messages(messages: list[dict]) -> list[tuple[dict, dict | None]]:
+    pairs: list[tuple[dict, dict | None]] = []
+    i = 0
+    while i < len(messages):
+        if (
+            messages[i]["role"] == "user"
+            and i + 1 < len(messages)
+            and messages[i + 1]["role"] == "assistant"
+        ):
+            pairs.append((messages[i], messages[i + 1]))
+            i += 2
+        else:
+            pairs.append((messages[i], None))
+            i += 1
+    return pairs
+
+
+def render_chatbot() -> None:
+    st.markdown(
+        "Ask a question about Medicare Part D prescribing. The bot writes SQL "
+        "against the full 2021-2023 dataset (filters from the Dashboard tab don't apply here)."
+    )
+
+    client = _get_chatbot_client()
+    if client is None:
+        st.error(
+            "Gemini API key not configured. Add `GEMINI_API_KEY` to "
+            "`.streamlit/secrets.toml` to enable the chatbot."
+        )
+        return
+
+    if "chat_messages" not in st.session_state:
+        st.session_state.chat_messages = []
+
+    suggestion_cols = st.columns(3)
+    suggestions = [
+        "What were the top 5 drugs by total cost in 2023?",
+        "Which state had the highest spending on Eliquis?",
+        "How did Cardiology spending change from 2021 to 2023?",
+    ]
+    pending_input: str | None = None
+    for col, suggestion in zip(suggestion_cols, suggestions):
+        with col:
+            if st.button(suggestion, key=f"chat_suggest_{suggestion}", use_container_width=True):
+                pending_input = suggestion
+
+    user_input = st.chat_input("Ask a question about the Medicare Part D data")
+    actual_input = user_input or pending_input
+
+    if actual_input:
+        st.session_state.chat_messages.append({"role": "user", "content": actual_input})
+
+        history = []
+        for msg in st.session_state.chat_messages:
+            role = "user" if msg["role"] == "user" else "model"
+            history.append(
+                types.Content(role=role, parts=[types.Part(text=msg["content"])])
+            )
+
+        with st.spinner("Thinking..."):
+            try:
+                answer, sql_used = _run_chatbot_turn(client, history)
+            except Exception as exc:
+                err_type = type(exc).__name__
+                err_str = str(exc)
+                if _is_quota_error(exc):
+                    answer = (
+                        "Daily free-tier quota for Gemini has been reached. "
+                        "Please try again tomorrow, or check usage in Google AI Studio.\n\n"
+                        f"_Underlying error — **{err_type}**: `{err_str}`_"
+                    )
+                else:
+                    answer = (
+                        f"Sorry, something went wrong.\n\n"
+                        f"**{err_type}**: `{err_str}`"
+                    )
+                sql_used = None
+
+        entry = {"role": "assistant", "content": answer}
+        if sql_used:
+            entry["sql"] = sql_used
+        st.session_state.chat_messages.append(entry)
+
+    pairs = _pair_chat_messages(st.session_state.chat_messages)
+    if pairs:
+        st.markdown("---")
+    for idx, (user_msg, assistant_msg) in enumerate(reversed(pairs)):
+        if idx > 0:
+            st.markdown("---")
+        with st.chat_message("user"):
+            st.markdown(user_msg["content"])
+        if assistant_msg is not None:
+            with st.chat_message("assistant"):
+                st.markdown(assistant_msg["content"])
+                if assistant_msg.get("sql"):
+                    with st.expander("Show SQL"):
+                        st.code(assistant_msg["sql"], language="sql")
+
+
 def main() -> None:
     st.markdown(
         """
@@ -1025,6 +1362,15 @@ def main() -> None:
     except RuntimeError as exc:
         st.error(str(exc))
         st.stop()
+
+    header_extra_cols = st.columns([6, 1])
+    with header_extra_cols[1]:
+        with st.popover(
+            "Ask AI",
+            icon=":material/auto_awesome:",
+            use_container_width=True,
+        ):
+            render_chatbot()
 
     year_options = sorted(df["Year"].dropna().astype(int).unique().tolist())
     state_options = _select_options(df["State"])
@@ -1103,6 +1449,42 @@ def main() -> None:
         _section_title("Total drug cost trend", context=context),
     )
     chart_card(yearly_fig)
+
+    st.divider()
+
+    section_heading("Geographic distribution")
+    geographic_section_df = apply_filters(
+        df,
+        selected_years,
+        [],
+        selected_specialties,
+    )
+    geo_context = _filter_context(selected_years, [], selected_specialties)
+    st.caption(geo_context)
+    st.caption(
+        "Total drug cost by state across the selected years and specialties. "
+        "The state filter is not applied here so all 50 states + DC remain visible."
+    )
+    if not geographic_section_df.empty:
+        valid_state_names = {
+            name for name, code in STATE_NAME_TO_CODE.items() if code in USA_MAP_STATE_CODES
+        }
+        state_totals = (
+            geographic_section_df[geographic_section_df["State"].isin(valid_state_names)]
+            .groupby("State")["Total Drug Cost"]
+            .sum()
+            .sort_values(ascending=False)
+        )
+        if not state_totals.empty:
+            top_state = state_totals.index[0]
+            top_state_cost = state_totals.iloc[0]
+            insight_strip(
+                f"<strong>Highest spending state:</strong> {top_state} at "
+                f"<strong>{fmt_currency(top_state_cost)}</strong> in total drug costs."
+            )
+    geo_title = _section_title("Total drug cost by state", context=geo_context)
+    geo_fig = render_state_choropleth(geographic_section_df, geo_title)
+    chart_card(geo_fig)
 
     st.divider()
 

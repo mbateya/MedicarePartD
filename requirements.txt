@@ -2,3 +2,5 @@ pandas
 plotly
 pyarrow
 streamlit
+duckdb
+google-genai
