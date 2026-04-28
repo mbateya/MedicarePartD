@@ -1,17 +1,17 @@
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 from typing import Iterable
 
+import anthropic
 import duckdb
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import streamlit as st
-from google import genai
-from google.genai import types
 
 
 APP_TITLE = "Medicare Part D Prescribing Dashboard"
@@ -1068,9 +1068,10 @@ def _select_options(series: pd.Series) -> list[str]:
     return sorted(series.dropna().astype(str).unique().tolist())
 
 
-CHATBOT_MODEL = "gemini-2.5-flash-lite"
+CHATBOT_MODEL = "claude-haiku-4-5"
 CHATBOT_MAX_TOOL_CALLS = 5
 CHATBOT_ROW_LIMIT = 50
+CHATBOT_MAX_TOKENS = 4096
 
 CHATBOT_SYSTEM_PROMPT = """\
 You are a data analyst for the Medicare Part D Prescribing dashboard. \
@@ -1092,35 +1093,58 @@ Schema of `medicare` (years 2021-2023):
 
 Guidelines:
 - Always wrap multi-word column names in double quotes.
-- Use ILIKE with '%pattern%' for partial drug or specialty matches.
 - LIMIT your final SELECT to 50 rows.
 - After receiving query results, write a 1-3 sentence answer in plain English.
-- If a query returns no rows, suggest a refinement (e.g. broader ILIKE).
 - Do not invent column names or values that aren't in the schema above.
+
+Drug name matching (CRITICAL):
+- The user's term may be a brand name, a generic name, a partial name, a misspelling, \
+or a name that has dosage/form suffixes in the data (e.g. "Dupixent" is stored as \
+"Dupixent Pen" and "Dupixent Syringe"; "Rosuvastatin" is stored as "Rosuvastatin Calcium"; \
+"Xeljanz" is stored as both "Xeljanz" and "Xeljanz XR").
+- ALWAYS match drug names with ILIKE '%term%' on BOTH "Brand Name" AND "Generic Name". \
+NEVER use `=` for drug names.
+- ALWAYS aggregate (SUM / SUM / SUM) across all matching rows so brand/form variants combine \
+into one total.
+- Example: "How much was spent on Dupixent in 2023?" →
+    SELECT SUM("Total Drug Cost") AS total_cost
+    FROM medicare
+    WHERE Year = 2023
+      AND ("Brand Name" ILIKE '%Dupixent%' OR "Generic Name" ILIKE '%Dupixent%');
+- Example: "spending on rosuvastatin in 2023" →
+    SELECT SUM("Total Drug Cost") AS total_cost
+    FROM medicare
+    WHERE Year = 2023
+      AND ("Brand Name" ILIKE '%rosuvastatin%' OR "Generic Name" ILIKE '%rosuvastatin%');
+- If a drug query returns no rows or NULL, retry with a shorter substring of the term \
+(e.g. drop the last few characters) before telling the user data is unavailable.
+
+Specialty matching:
+- Use ILIKE '%term%' on Specialty for partial matches.
 """
 
-RUN_SQL_DECLARATION = types.FunctionDeclaration(
-    name="run_sql",
-    description="Execute a read-only SELECT or WITH query against the `medicare` table and return the rows.",
-    parameters=types.Schema(
-        type=types.Type.OBJECT,
-        properties={
-            "sql": types.Schema(
-                type=types.Type.STRING,
-                description="A read-only SQL query (SELECT or WITH only)",
-            ),
+RUN_SQL_TOOL = {
+    "name": "run_sql",
+    "description": "Execute a read-only SELECT or WITH query against the `medicare` table and return the rows.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "sql": {
+                "type": "string",
+                "description": "A read-only SQL query (SELECT or WITH only)",
+            },
         },
-        required=["sql"],
-    ),
-)
+        "required": ["sql"],
+    },
+}
 
 
 @st.cache_resource(show_spinner=False)
-def _get_chatbot_client() -> genai.Client | None:
-    api_key = st.secrets.get("GEMINI_API_KEY") if hasattr(st, "secrets") else None
+def _get_chatbot_client() -> anthropic.Anthropic | None:
+    api_key = st.secrets.get("ANTHROPIC_API_KEY") if hasattr(st, "secrets") else None
     if not api_key:
         return None
-    return genai.Client(api_key=api_key)
+    return anthropic.Anthropic(api_key=api_key)
 
 
 @st.cache_resource(show_spinner=False)
@@ -1166,55 +1190,57 @@ def _execute_sql(sql: str) -> dict:
 
 
 def _is_quota_error(exc: Exception) -> bool:
-    msg = str(exc).upper()
-    if "RESOURCE_EXHAUSTED" in msg or "RATE_LIMIT_EXCEEDED" in msg:
-        return True
-    code = getattr(exc, "code", None) or getattr(exc, "status_code", None)
-    return code == 429
+    return isinstance(exc, anthropic.RateLimitError)
 
 
-def _run_chatbot_turn(client: genai.Client, history: list) -> tuple[str, str | None]:
+def _run_chatbot_turn(client: anthropic.Anthropic, history: list) -> tuple[str, str | None]:
     """Run the model + tool loop until we get a text answer. Returns (answer, sql_used)."""
-    contents = list(history)
+    messages = list(history)
     sql_used: str | None = None
-    config = types.GenerateContentConfig(
-        system_instruction=CHATBOT_SYSTEM_PROMPT,
-        tools=[types.Tool(function_declarations=[RUN_SQL_DECLARATION])],
-    )
+    system_blocks = [
+        {
+            "type": "text",
+            "text": CHATBOT_SYSTEM_PROMPT,
+            "cache_control": {"type": "ephemeral"},
+        }
+    ]
 
     for _ in range(CHATBOT_MAX_TOOL_CALLS):
-        response = client.models.generate_content(
+        response = client.messages.create(
             model=CHATBOT_MODEL,
-            contents=contents,
-            config=config,
+            max_tokens=CHATBOT_MAX_TOKENS,
+            system=system_blocks,
+            tools=[RUN_SQL_TOOL],
+            messages=messages,
         )
-        candidate = response.candidates[0]
-        function_call = None
-        text_parts: list[str] = []
-        for part in candidate.content.parts or []:
-            if getattr(part, "function_call", None):
-                function_call = part.function_call
-            elif getattr(part, "text", None):
-                text_parts.append(part.text)
 
-        if function_call is None:
+        tool_use_block = None
+        text_parts: list[str] = []
+        for block in response.content:
+            if block.type == "tool_use":
+                tool_use_block = block
+            elif block.type == "text":
+                text_parts.append(block.text)
+
+        if response.stop_reason != "tool_use" or tool_use_block is None:
             answer = "\n".join(t for t in text_parts if t).strip()
             return (answer or "(no response)", sql_used)
 
-        sql = (function_call.args or {}).get("sql", "")
+        sql = tool_use_block.input.get("sql", "") if isinstance(tool_use_block.input, dict) else ""
         sql_used = sql
         result = _execute_sql(sql)
-        contents.append(candidate.content)
-        contents.append(
-            types.Content(
-                role="user",
-                parts=[
-                    types.Part.from_function_response(
-                        name="run_sql",
-                        response=result,
-                    )
+        messages.append({"role": "assistant", "content": response.content})
+        messages.append(
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": tool_use_block.id,
+                        "content": json.dumps(result, default=str),
+                    }
                 ],
-            )
+            }
         )
 
     return (
@@ -1250,7 +1276,7 @@ def render_chatbot() -> None:
     client = _get_chatbot_client()
     if client is None:
         st.error(
-            "Gemini API key not configured. Add `GEMINI_API_KEY` to "
+            "Anthropic API key not configured. Add `ANTHROPIC_API_KEY` to "
             "`.streamlit/secrets.toml` to enable the chatbot."
         )
         return
@@ -1278,10 +1304,8 @@ def render_chatbot() -> None:
 
         history = []
         for msg in st.session_state.chat_messages:
-            role = "user" if msg["role"] == "user" else "model"
-            history.append(
-                types.Content(role=role, parts=[types.Part(text=msg["content"])])
-            )
+            role = "user" if msg["role"] == "user" else "assistant"
+            history.append({"role": role, "content": msg["content"]})
 
         with st.spinner("Thinking..."):
             try:
@@ -1291,8 +1315,8 @@ def render_chatbot() -> None:
                 err_str = str(exc)
                 if _is_quota_error(exc):
                     answer = (
-                        "Daily free-tier quota for Gemini has been reached. "
-                        "Please try again tomorrow, or check usage in Google AI Studio.\n\n"
+                        "Anthropic API rate limit or spend cap reached. "
+                        "Please try again later, or check usage in the Anthropic Console.\n\n"
                         f"_Underlying error — **{err_type}**: `{err_str}`_"
                     )
                 else:
