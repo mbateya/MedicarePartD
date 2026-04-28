@@ -512,8 +512,21 @@ def load_provider_summary() -> pd.DataFrame:
     return pd.read_parquet(PROVIDER_SUMMARY_PATH)
 
 
-def summarize_top_providers(df: pd.DataFrame, drug_name: str, top_n: int) -> pd.DataFrame:
-    drug_df = df[df["Generic Name"] == drug_name].copy()
+def summarize_top_providers(
+    df: pd.DataFrame,
+    drug_name: str,
+    top_n: int,
+    years: list[int] | None = None,
+    states: list[str] | None = None,
+    specialties: list[str] | None = None,
+) -> pd.DataFrame:
+    drug_df = df[df["Brand Name"] == drug_name].copy()
+    if years:
+        drug_df = drug_df[drug_df["Year"].isin(years)]
+    if states:
+        drug_df = drug_df[drug_df["State"].isin(states)]
+    if specialties:
+        drug_df = drug_df[drug_df["Specialty"].isin(specialties)]
     drug_df["Prescriber Name"] = drug_df["Prescriber Name"].str.slice(0, 35)
     summary = drug_df.groupby(["Year", "Prescriber Name"], as_index=False)[
         ["Total Claims", "Total 30-Day Fills", "Total Days Supply",
@@ -1180,14 +1193,14 @@ def main() -> None:
 
     section_heading("Top prescribers by drug")
     st.markdown(
-        "Select a drug to see which prescribers account for the most spending. "
-        "Shows up to the top 25 providers per year across the selected years."
+        "Select a brand-name drug to see which prescribers account for the most spending. "
+        "Year, state, and specialty filters above are applied."
     )
 
     provider_summary = load_provider_summary()
-    drug_options = sorted(provider_summary["Generic Name"].dropna().unique().tolist())
+    drug_options = sorted(provider_summary["Brand Name"].dropna().unique().tolist())
     selected_provider_drug = st.selectbox(
-        "Select a drug (generic name)",
+        "Select a drug (brand name)",
         options=[""] + drug_options,
         index=0,
         key="provider_drug_select",
@@ -1198,7 +1211,14 @@ def main() -> None:
             "Show providers appearing in each year's top:",
             "provider_top_n",
         )
-        provider_df = summarize_top_providers(provider_summary, selected_provider_drug, provider_top_n)
+        provider_df = summarize_top_providers(
+            provider_summary,
+            selected_provider_drug,
+            provider_top_n,
+            years=selected_years or None,
+            states=selected_states or None,
+            specialties=selected_specialties or None,
+        )
         if not provider_df.empty:
             provider_fig = render_charts(
                 provider_df,
