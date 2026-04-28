@@ -677,6 +677,12 @@ def _fmt_cost(value: float) -> str:
     return f"${value / 1e6:.1f}M"
 
 
+def _fmt_count(value: float) -> str:
+    if value >= 1e9:
+        return f"{value / 1e9:.2f}B"
+    return f"{value / 1e6:.1f}M"
+
+
 def render_metric_cards(filtered_df: pd.DataFrame, drug_col: str) -> None:
     total_cost = filtered_df["Total Drug Cost"].sum()
     total_claims = filtered_df["Total Claims"].sum()
@@ -709,7 +715,7 @@ def render_metric_cards(filtered_df: pd.DataFrame, drug_col: str) -> None:
   <div style="background:white;border:0.5px solid #e8e8e8;border-radius:10px;padding:14px 16px;position:relative;overflow:hidden;">
     <div style="position:absolute;top:0;left:0;width:3px;height:100%;background:#7f77dd;border-radius:10px 0 0 10px;"></div>
     <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:#888;margin-bottom:6px;">Total claims</div>
-    <div style="font-size:24px;font-weight:600;color:#111;line-height:1;">{total_claims / 1e9:.2f}B</div>
+    <div style="font-size:24px;font-weight:600;color:#111;line-height:1;">{_fmt_count(total_claims)}</div>
     <div style="font-size:12px;color:#888;margin-top:4px;">All selected years</div>
   </div>
 
@@ -723,7 +729,7 @@ def render_metric_cards(filtered_df: pd.DataFrame, drug_col: str) -> None:
   <div style="background:white;border:0.5px solid #e8e8e8;border-radius:10px;padding:14px 16px;position:relative;overflow:hidden;">
     <div style="position:absolute;top:0;left:0;width:3px;height:100%;background:#ef9f27;border-radius:10px 0 0 10px;"></div>
     <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:#888;margin-bottom:6px;">Total 30-day fills</div>
-    <div style="font-size:24px;font-weight:600;color:#111;line-height:1;">{total_fills / 1e9:.2f}B</div>
+    <div style="font-size:24px;font-weight:600;color:#111;line-height:1;">{_fmt_count(total_fills)}</div>
     <div style="font-size:12px;color:#888;margin-top:4px;">All selected years</div>
   </div>
 
