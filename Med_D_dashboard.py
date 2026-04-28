@@ -1068,7 +1068,7 @@ def _select_options(series: pd.Series) -> list[str]:
     return sorted(series.dropna().astype(str).unique().tolist())
 
 
-CHATBOT_MODEL = "gemini-2.5-flash"
+CHATBOT_MODEL = "gemini-2.5-flash-lite"
 CHATBOT_MAX_TOOL_CALLS = 5
 CHATBOT_ROW_LIMIT = 50
 
