@@ -135,11 +135,16 @@ div[role="radiogroup"] label {
     transition: background 0.15s, border-color 0.15s;
 }
 div[role="radiogroup"] label:has(input:checked) {
-    background: #0a1628;
-    color: #7fb3f5;
-    border-color: #1a3460;
+    border-color: #185fa5;
+    color: #185fa5;
 }
 div[role="radiogroup"] input[type="radio"] { display: none; }
+
+/* Style segmented_control selected button */
+button[data-testid="stBaseButton-segmented_control"][aria-pressed="true"] {
+    border-color: #185fa5 !important;
+    color: #185fa5 !important;
+}
 
 /* Style multiselect chips as blue pills (not red) */
 span[data-baseweb="tag"] {
@@ -511,7 +516,7 @@ def summarize_trends(df: pd.DataFrame, grouping: str, selected_drugs: list[str])
 def format_tables(df: pd.DataFrame) -> pd.io.formats.style.Styler:
     currency_cols = [
         col
-        for col in ["Total Drug Cost", "Cost per Claim", "Cost per 30-Day Fill"]
+        for col in ["Cost per Claim", "Cost per 30-Day Fill"]
         if col in df.columns
     ]
     number_cols = [
@@ -521,6 +526,8 @@ def format_tables(df: pd.DataFrame) -> pd.io.formats.style.Styler:
     ]
     formats = {col: "${:,.2f}" for col in currency_cols}
     formats.update({col: "{:,.0f}" for col in number_cols})
+    if "Total Drug Cost" in df.columns:
+        formats["Total Drug Cost"] = lambda x: f"${x/1e9:.1f}B"
     return df.style.format(formats)
 
 
@@ -748,7 +755,7 @@ def render_charts(
     if color == "Year":
         chart_df[color] = chart_df[color].astype(str)
     year_values = sorted(chart_df[color].dropna().unique().tolist()) if color == "Year" else []
-    year_palette = ["#b5d4f4", "#378add", "#0a1628"]
+    year_palette = ["#b5d4f4", "#378add", "#185fa5"]
     color_map = {
         year: year_palette[index % len(year_palette)]
         for index, year in enumerate(year_values)
@@ -838,7 +845,7 @@ def render_yearly_spending_chart(df: pd.DataFrame, title: str):
 
     tick_vals, tick_text = _build_billions_ticks(float(df["Total Drug Cost"].max()))
     fig.update_xaxes(dtick=1, tickmode="linear")
-    fig.update_yaxes(tickvals=tick_vals, ticktext=tick_text, rangemode="tozero")
+    fig.update_yaxes(tickvals=tick_vals, ticktext=tick_text, range=y_range)
     return fig
 
 
