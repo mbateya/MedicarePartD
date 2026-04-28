@@ -6,6 +6,8 @@ from typing import Iterable
 
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import streamlit as st
 
 
@@ -42,6 +44,8 @@ METRIC_COLUMNS = [
 ]
 SPECIALTY_ALIASES = {
     "Family Medicine": "Family Practice",
+    "Interventional Cardiology": "Cardiology",
+    "Medical Oncology": "Hematology-Oncology",
 }
 STATE_NAMES = {
     "AA": "Armed Forces Americas",
@@ -789,6 +793,14 @@ def _build_billions_ticks(max_value: float) -> tuple[list[float], list[str]]:
     return tick_vals, tick_text
 
 
+def fmt_currency(val: float) -> str:
+    for divisor, suffix in [(1e12, "T"), (1e9, "B"), (1e6, "M"), (1e3, "K")]:
+        if val >= divisor:
+            s = f"{val / divisor:.1f}".rstrip("0").rstrip(".")
+            return f"${s}{suffix}"
+    return f"${val:.0f}"
+
+
 def render_treemap(df: pd.DataFrame, name_col: str, top_n: int, title: str):
     totals = (
         df.groupby(name_col, dropna=False)["Total Drug Cost"]
@@ -798,27 +810,67 @@ def render_treemap(df: pd.DataFrame, name_col: str, top_n: int, title: str):
     )
     top = totals.head(top_n).copy()
     others_cost = totals.iloc[top_n:]["Total Drug Cost"].sum()
-    # Others appended last — combined with sort=False, squarify places it rightmost
-    if others_cost > 0:
-        top = pd.concat(
-            [top, pd.DataFrame({name_col: ["Others"], "Total Drug Cost": [others_cost]})],
-            ignore_index=True,
-        )
     palette = ["#185fa5", "#378add", "#b5d4f4", "#7f77dd", "#1d9e75", "#ef9f27", "#d85a30"]
-    fig = px.treemap(
-        top,
-        path=[name_col],
-        values="Total Drug Cost",
-        color=name_col,
-        color_discrete_map={"Others": "#cccccc"},
-        color_discrete_sequence=palette,
-    )
-    fig.update_traces(
-        texttemplate="<b>%{label}</b><br>%{value:$,.0f}",
-        textfont=dict(size=12),
-        hovertemplate="<b>%{label}</b><br>Total Drug Cost: %{value:$,.0f}<extra></extra>",
-        sort=False,
-    )
+    colors = [palette[i % len(palette)] for i in range(len(top))]
+    top_abbrev = [fmt_currency(v) for v in top["Total Drug Cost"]]
+
+    if others_cost > 0:
+        named_total = top["Total Drug Cost"].sum()
+        grand_total = named_total + others_cost
+        named_frac = round(named_total / grand_total, 4)
+        others_frac = round(others_cost / grand_total, 4)
+
+        fig = make_subplots(
+            rows=1,
+            cols=2,
+            column_widths=[named_frac, others_frac],
+            specs=[[{"type": "treemap"}, {"type": "treemap"}]],
+            horizontal_spacing=0.005,
+        )
+        fig.add_trace(
+            go.Treemap(
+                labels=top[name_col].tolist(),
+                parents=[""] * len(top),
+                values=top["Total Drug Cost"].tolist(),
+                customdata=top_abbrev,
+                marker=dict(colors=colors),
+                texttemplate="<b>%{label}</b><br>%{customdata}",
+                textfont=dict(size=12),
+                hovertemplate="<b>%{label}</b><br>Total Drug Cost: %{value:$,.0f}<extra></extra>",
+                sort=False,
+            ),
+            row=1,
+            col=1,
+        )
+        fig.add_trace(
+            go.Treemap(
+                labels=["Others"],
+                parents=[""],
+                values=[others_cost],
+                customdata=[fmt_currency(others_cost)],
+                marker=dict(colors=["#cccccc"]),
+                texttemplate="<b>%{label}</b><br>%{customdata}",
+                textfont=dict(size=12),
+                hovertemplate="<b>%{label}</b><br>Total Drug Cost: %{value:$,.0f}<extra></extra>",
+            ),
+            row=1,
+            col=2,
+        )
+    else:
+        fig = go.Figure(
+            go.Treemap(
+                labels=top[name_col].tolist(),
+                parents=[""] * len(top),
+                values=top["Total Drug Cost"].tolist(),
+                customdata=top_abbrev,
+                marker=dict(colors=colors),
+                texttemplate="<b>%{label}</b><br>%{customdata}",
+                textfont=dict(size=12),
+                hovertemplate="<b>%{label}</b><br>Total Drug Cost: %{value:$,.0f}<extra></extra>",
+                sort=False,
+            )
+        )
+
     fig = style_fig(fig, title=title)
     fig.update_layout(showlegend=False, margin=dict(t=60, r=10, b=10, l=10))
     return fig
