@@ -426,7 +426,7 @@ def load_or_build_dataset() -> pd.DataFrame:
 def render_top_n_control(label: str, key: str) -> int:
     selection = st.segmented_control(
         label,
-        options=[5, 10],
+        options=[5, 10, 20],
         default=10,
         key=key,
     )
@@ -798,6 +798,7 @@ def render_treemap(df: pd.DataFrame, name_col: str, top_n: int, title: str):
     )
     top = totals.head(top_n).copy()
     others_cost = totals.iloc[top_n:]["Total Drug Cost"].sum()
+    # Others appended last — combined with sort=False, squarify places it rightmost
     if others_cost > 0:
         top = pd.concat(
             [top, pd.DataFrame({name_col: ["Others"], "Total Drug Cost": [others_cost]})],
@@ -816,6 +817,7 @@ def render_treemap(df: pd.DataFrame, name_col: str, top_n: int, title: str):
         texttemplate="<b>%{label}</b><br>%{value:$,.0f}",
         textfont=dict(size=12),
         hovertemplate="<b>%{label}</b><br>Total Drug Cost: %{value:$,.0f}<extra></extra>",
+        sort=False,
     )
     fig = style_fig(fig, title=title)
     fig.update_layout(showlegend=False, margin=dict(t=60, r=10, b=10, l=10))
@@ -1061,7 +1063,7 @@ def main() -> None:
         )
     with drug_ctrl_cols[1]:
         drug_chart_type = st.segmented_control(
-            "Chart type", options=["Bar", "Treemap"], default="Bar", key="drug_chart_type"
+            "Chart type", options=["Bar", "Treemap"], default="Treemap", key="drug_chart_type"
         )
     top_drugs = summarize_top_drugs(filtered_df, grouping, top_drug_n)
     drug_title = _section_title(
@@ -1139,7 +1141,7 @@ def main() -> None:
         )
     with spec_ctrl_cols[1]:
         specialty_chart_type = st.segmented_control(
-            "Chart type", options=["Bar", "Treemap"], default="Bar", key="specialty_chart_type"
+            "Chart type", options=["Bar", "Treemap"], default="Treemap", key="specialty_chart_type"
         )
     top_specialties = summarize_top_specialties(specialty_section_df, top_specialty_n)
     specialty_context = _filter_context(selected_years, selected_states, [])
