@@ -17,6 +17,7 @@ APP_SUBTITLE = (
 
 REPO_DIR = Path(__file__).resolve().parent
 PROCESSED_PATH = REPO_DIR / "data" / "processed" / "medicare_partd_2021_2023.parquet"
+PROVIDER_SUMMARY_PATH = REPO_DIR / "data" / "processed" / "medicare_partd_top_providers_by_drug_2021_2023.parquet"
 SUPPORTED_EXTENSIONS = {".csv", ".txt", ".tsv", ".parquet"}
 TARGET_YEARS = {2021, 2022, 2023}
 
@@ -506,6 +507,22 @@ def summarize_yearly_spending(df: pd.DataFrame) -> pd.DataFrame:
     return _summarize(df, ["Year"]).sort_values("Year")
 
 
+@st.cache_data(show_spinner="Loading provider data...")
+def load_provider_summary() -> pd.DataFrame:
+    return pd.read_parquet(PROVIDER_SUMMARY_PATH)
+
+
+def summarize_top_providers(df: pd.DataFrame, drug_name: str, top_n: int) -> pd.DataFrame:
+    drug_df = df[df["Generic Name"] == drug_name].copy()
+    drug_df["Prescriber Name"] = drug_df["Prescriber Name"].str.slice(0, 35)
+    summary = drug_df.groupby(["Year", "Prescriber Name"], as_index=False)[
+        ["Total Claims", "Total 30-Day Fills", "Total Days Supply",
+         "Total Drug Cost", "Total Beneficiaries"]
+    ].sum()
+    summary = _add_derived_metrics(summary)
+    return _annual_top_n_full_history(summary, "Prescriber Name", "Total Drug Cost", top_n)
+
+
 def summarize_trends(df: pd.DataFrame, grouping: str, selected_drugs: list[str]) -> pd.DataFrame:
     drug_col = "Brand Name" if grouping == "Brand name" else "Generic Name"
     trend_df = df[df[drug_col].isin(selected_drugs)]
@@ -608,11 +625,11 @@ def style_fig(fig, title: str = "", subtitle: str = ""):
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         font=dict(family="Inter, system-ui, sans-serif", size=12, color="#444"),
-        margin=dict(t=60 if title else 20, r=20, b=40, l=0),
+        margin=dict(t=60 if title else 20, r=20, b=70, l=0),
         legend=dict(
             orientation="h",
-            yanchor="bottom",
-            y=1.02,
+            yanchor="top",
+            y=-0.18,
             xanchor="left",
             x=0,
             bgcolor="rgba(0,0,0,0)",
@@ -1158,6 +1175,60 @@ def main() -> None:
             use_container_width=True,
             hide_index=True,
         )
+
+    st.divider()
+
+    section_heading("Top prescribers by drug")
+    st.markdown(
+        "Select a drug to see which prescribers account for the most spending. "
+        "Shows up to the top 25 providers per year across the selected years."
+    )
+
+    provider_summary = load_provider_summary()
+    drug_options = sorted(provider_summary["Generic Name"].dropna().unique().tolist())
+    selected_provider_drug = st.selectbox(
+        "Select a drug (generic name)",
+        options=[""] + drug_options,
+        index=0,
+        key="provider_drug_select",
+    )
+
+    if selected_provider_drug:
+        provider_top_n = render_top_n_control(
+            "Show providers appearing in each year's top:",
+            "provider_top_n",
+        )
+        provider_df = summarize_top_providers(provider_summary, selected_provider_drug, provider_top_n)
+        if not provider_df.empty:
+            provider_fig = render_charts(
+                provider_df,
+                x="Total Drug Cost",
+                y="Prescriber Name",
+                color="Year",
+                title=_section_title(
+                    f"Top prescribers — {selected_provider_drug}",
+                    context=context,
+                ),
+                orientation="h",
+            )
+            provider_fig.update_layout(margin=dict(l=220))
+            chart_card(provider_fig)
+            st.markdown(DATAFRAME_CSS, unsafe_allow_html=True)
+            st.dataframe(
+                format_tables(
+                    provider_df[[
+                        "Year",
+                        "Prescriber Name",
+                        "Total Drug Cost",
+                        "Total Claims",
+                        "Total 30-Day Fills",
+                        "Cost per Claim",
+                        "Cost per 30-Day Fill",
+                    ]]
+                ),
+                use_container_width=True,
+                hide_index=True,
+            )
 
     st.divider()
     st.markdown(
