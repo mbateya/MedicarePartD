@@ -672,7 +672,7 @@ def style_fig(fig, title: str = "", subtitle: str = ""):
 
 
 def _fmt_num(value: float, unit: float) -> str:
-    return f"{value / unit:.2f}".rstrip("0").rstrip(".")
+    return f"{value / unit:.1f}".rstrip("0").rstrip(".")
 
 
 def _fmt_cost(value: float) -> str:
