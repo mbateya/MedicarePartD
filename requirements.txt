@@ -4,3 +4,4 @@ pyarrow
 streamlit
 duckdb
 anthropic
+huggingface_hub

@@ -10,6 +10,7 @@ import duckdb
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+from huggingface_hub import hf_hub_download
 from plotly.subplots import make_subplots
 import streamlit as st
 
@@ -23,6 +24,32 @@ APP_SUBTITLE = (
 REPO_DIR = Path(__file__).resolve().parent
 PROCESSED_PATH = REPO_DIR / "data" / "processed" / "medicare_partd_2021_2023.parquet"
 PROVIDER_SUMMARY_PATH = REPO_DIR / "data" / "processed" / "medicare_partd_top_providers_by_drug_2021_2023.parquet"
+
+HF_DATASET_ID = "mbateya/medicare_part_d_prescribers"
+HF_PROCESSED_FILE = "processed/medicare_partd_2021_2023.parquet"
+HF_PROVIDER_SUMMARY_FILE = "processed/medicare_partd_top_providers_by_drug_2021_2023.parquet"
+
+
+@st.cache_resource(show_spinner="Downloading processed dataset…")
+def _resolved_processed_path() -> str:
+    if PROCESSED_PATH.exists():
+        return PROCESSED_PATH.as_posix()
+    return hf_hub_download(
+        repo_id=HF_DATASET_ID,
+        filename=HF_PROCESSED_FILE,
+        repo_type="dataset",
+    )
+
+
+@st.cache_resource(show_spinner="Downloading provider data…")
+def _resolved_provider_summary_path() -> str:
+    if PROVIDER_SUMMARY_PATH.exists():
+        return PROVIDER_SUMMARY_PATH.as_posix()
+    return hf_hub_download(
+        repo_id=HF_DATASET_ID,
+        filename=HF_PROVIDER_SUMMARY_FILE,
+        repo_type="dataset",
+    )
 SUPPORTED_EXTENSIONS = {".csv", ".txt", ".tsv", ".parquet"}
 TARGET_YEARS = {2021, 2022, 2023}
 
@@ -427,10 +454,15 @@ def build_processed_data() -> pd.DataFrame:
 
 @st.cache_data(show_spinner="Loading Medicare Part D dataset...")
 def load_or_build_dataset() -> pd.DataFrame:
-    if PROCESSED_PATH.exists():
+    try:
+        path = Path(_resolved_processed_path())
+    except Exception:
+        path = None
+
+    if path is not None and path.exists():
         return _normalize_dataset(
             _load_processed_parquet(
-                PROCESSED_PATH,
+                path,
                 "Loading the processed parquet",
             )
         )
@@ -524,7 +556,7 @@ def summarize_yearly_spending(df: pd.DataFrame) -> pd.DataFrame:
 
 @st.cache_data(show_spinner="Loading provider data...")
 def load_provider_summary() -> pd.DataFrame:
-    return pd.read_parquet(PROVIDER_SUMMARY_PATH)
+    return pd.read_parquet(_resolved_provider_summary_path())
 
 
 def summarize_top_providers(
@@ -1151,7 +1183,7 @@ def _get_chatbot_client() -> anthropic.Anthropic | None:
 def _get_duckdb_view():
     con = duckdb.connect(":memory:")
     con.execute(
-        f"CREATE VIEW medicare AS SELECT * FROM read_parquet('{PROCESSED_PATH.as_posix()}')"
+        f"CREATE VIEW medicare AS SELECT * FROM read_parquet('{_resolved_processed_path()}')"
     )
     return con
 
