@@ -28,6 +28,7 @@ PROVIDER_SUMMARY_PATH = REPO_DIR / "data" / "processed" / "medicare_partd_top_pr
 HF_DATASET_ID = "mbateya/medicare_part_d_prescribers"
 HF_PROCESSED_FILE = "processed/medicare_partd_2021_2023.parquet"
 HF_PROVIDER_SUMMARY_FILE = "processed/medicare_partd_top_providers_by_drug_2021_2023.parquet"
+HF_STATE_POPULATION_FILE = "state_population.parquet"
 
 
 @st.cache_resource(show_spinner="Downloading processed dataset…")
@@ -50,6 +51,16 @@ def _resolved_provider_summary_path() -> str:
         filename=HF_PROVIDER_SUMMARY_FILE,
         repo_type="dataset",
     )
+
+
+@st.cache_data(show_spinner="Loading state populations…", ttl=86400)
+def load_state_population() -> pd.DataFrame:
+    path = hf_hub_download(
+        repo_id=HF_DATASET_ID,
+        filename=HF_STATE_POPULATION_FILE,
+        repo_type="dataset",
+    )
+    return pd.read_parquet(path)
 SUPPORTED_EXTENSIONS = {".csv", ".txt", ".tsv", ".parquet"}
 TARGET_YEARS = {2021, 2022, 2023}
 
@@ -919,7 +930,12 @@ def render_treemap(df: pd.DataFrame, name_col: str, top_n: int, title: str):
     return fig
 
 
-def render_state_choropleth(df: pd.DataFrame, title: str):
+def render_state_choropleth(
+    df: pd.DataFrame,
+    title: str,
+    metric: str = "Total Cost",
+    population_year: int = 2023,
+):
     state_totals = (
         df.groupby("State", dropna=False)["Total Drug Cost"]
         .sum()
@@ -938,13 +954,37 @@ def render_state_choropleth(df: pd.DataFrame, title: str):
         )
         return fig
 
+    pop = load_state_population()
+    pop_col = f"Population_{population_year}"
+    if pop_col not in pop.columns:
+        pop_col = "Population_2023"
+    map_df = map_df.merge(
+        pop[["State", pop_col]].rename(columns={pop_col: "Population"}),
+        on="State",
+        how="left",
+    )
+    map_df["Cost per Capita"] = map_df["Total Drug Cost"] / map_df["Population"]
+
     map_df["cost_label"] = map_df["Total Drug Cost"].apply(fmt_currency)
+    map_df["per_capita_label"] = map_df["Cost per Capita"].apply(
+        lambda v: f"${v:,.0f}" if pd.notna(v) else "n/a"
+    )
+    map_df["population_label"] = map_df["Population"].apply(
+        lambda v: f"{v:,.0f}" if pd.notna(v) else "n/a"
+    )
+
+    if metric == "Per Capita Cost":
+        color_col = "Cost per Capita"
+        cb_formatter = lambda v: f"${v:,.0f}"
+    else:
+        color_col = "Total Drug Cost"
+        cb_formatter = fmt_currency
 
     fig = px.choropleth(
         map_df,
         locations="state_code",
         locationmode="USA-states",
-        color="Total Drug Cost",
+        color=color_col,
         scope="usa",
         color_continuous_scale=[
             [0.0, "#f0f6ff"],
@@ -952,17 +992,23 @@ def render_state_choropleth(df: pd.DataFrame, title: str):
             [1.0, "#0a1628"],
         ],
         hover_name="State",
-        custom_data=["cost_label"],
+        custom_data=["cost_label", "per_capita_label", "population_label"],
     )
     fig.update_traces(
-        hovertemplate="<b>%{hovertext}</b><br>Total Drug Cost: %{customdata[0]}<extra></extra>",
+        hovertemplate=(
+            "<b>%{hovertext}</b>"
+            "<br>Total Drug Cost: %{customdata[0]}"
+            "<br>Cost per Capita: %{customdata[1]}"
+            f"<br>Population ({population_year}): "
+            "%{customdata[2]}<extra></extra>"
+        ),
         marker_line_color="white",
         marker_line_width=0.5,
     )
 
-    max_val = float(map_df["Total Drug Cost"].max())
+    max_val = float(map_df[color_col].max())
     cb_ticks = [max_val * i / 4 for i in range(5)]
-    cb_labels = [fmt_currency(v) for v in cb_ticks]
+    cb_labels = [cb_formatter(v) for v in cb_ticks]
 
     fig = style_fig(fig, title=title)
     fig.update_layout(
@@ -1524,10 +1570,26 @@ def main() -> None:
     )
     geo_context = _filter_context(selected_years, [], selected_specialties)
     st.caption(geo_context)
-    st.caption(
-        "Total drug cost by state across the selected years and specialties. "
-        "The state filter is not applied here so all 50 states + DC remain visible."
+    map_metric = st.segmented_control(
+        "Map metric",
+        options=["Total Cost", "Per Capita Cost"],
+        default="Total Cost",
+        key="map_metric",
     )
+    if selected_years:
+        population_year = min(max(selected_years), 2023)
+    else:
+        population_year = 2023
+    if map_metric == "Per Capita Cost":
+        st.caption(
+            f"Drug cost per resident by state (Census {population_year} population). "
+            "Hover any state to see total cost, per-capita cost, and population."
+        )
+    else:
+        st.caption(
+            "Total drug cost by state across the selected years and specialties. "
+            "The state filter is not applied here so all 50 states + DC remain visible."
+        )
     if not geographic_section_df.empty:
         valid_state_names = {
             name for name, code in STATE_NAME_TO_CODE.items() if code in USA_MAP_STATE_CODES
@@ -1539,14 +1601,41 @@ def main() -> None:
             .sort_values(ascending=False)
         )
         if not state_totals.empty:
-            top_state = state_totals.index[0]
-            top_state_cost = state_totals.iloc[0]
-            insight_strip(
-                f"<strong>Highest spending state:</strong> {top_state} at "
-                f"<strong>{fmt_currency(top_state_cost)}</strong> in total drug costs."
-            )
-    geo_title = _section_title("Total drug cost by state", context=geo_context)
-    geo_fig = render_state_choropleth(geographic_section_df, geo_title)
+            if map_metric == "Per Capita Cost":
+                pop = load_state_population()
+                pop_col = f"Population_{population_year}"
+                if pop_col not in pop.columns:
+                    pop_col = "Population_2023"
+                per_capita = (
+                    state_totals.to_frame("Total Drug Cost")
+                    .merge(pop[["State", pop_col]], left_index=True, right_on="State")
+                    .assign(per_capita=lambda d: d["Total Drug Cost"] / d[pop_col])
+                    .sort_values("per_capita", ascending=False)
+                )
+                if not per_capita.empty:
+                    top = per_capita.iloc[0]
+                    insight_strip(
+                        f"<strong>Highest per-capita state:</strong> {top['State']} at "
+                        f"<strong>${top['per_capita']:,.0f}</strong> per resident."
+                    )
+            else:
+                top_state = state_totals.index[0]
+                top_state_cost = state_totals.iloc[0]
+                insight_strip(
+                    f"<strong>Highest spending state:</strong> {top_state} at "
+                    f"<strong>{fmt_currency(top_state_cost)}</strong> in total drug costs."
+                )
+    geo_title = _section_title(
+        "Drug cost per capita by state" if map_metric == "Per Capita Cost"
+        else "Total drug cost by state",
+        context=geo_context,
+    )
+    geo_fig = render_state_choropleth(
+        geographic_section_df,
+        geo_title,
+        metric=map_metric,
+        population_year=population_year,
+    )
     chart_card(geo_fig)
 
     st.divider()
