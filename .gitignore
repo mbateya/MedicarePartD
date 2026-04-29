@@ -25,3 +25,6 @@ env/
 # Large local Medicare raw data and prescriber-level caches
 MUP_DPR_*.csv
 data/processed/medicare_partd_prescriber*.parquet
+
+# Hugging Face staging output (uploaded separately, never committed)
+hf_staging/
