@@ -1,14 +1,29 @@
 from __future__ import annotations
 
+import math
+
 import duckdb
 import pandas as pd
 import streamlit as st
 
 st.set_page_config(page_title="Provider Search", layout="wide")
 
-HF_BASE = (
-    "https://huggingface.co/datasets/mbateya/medicare_part_d_prescribers/"
-    "resolve/main/prescribers"
+HF_DATASET_BASE = (
+    "https://huggingface.co/datasets/mbateya/medicare_part_d_prescribers/resolve/main"
+)
+HF_BASE = f"{HF_DATASET_BASE}/prescribers"
+CITIES_URL = f"{HF_DATASET_BASE}/cities.parquet"
+RADIUS_OPTIONS = [5, 10, 25, 50, 100]
+
+RADIUS_HELP = (
+    "**How the radius works**\n\n"
+    "Distance is measured between the center points of cities. A city is "
+    "fully included if its center falls within the radius, and fully "
+    "excluded otherwise — cities aren't split along their borders.\n\n"
+    "**About these cities**\n\n"
+    "City names come from each prescriber's listed practice address in the "
+    "CMS Medicare Part D data. They may not pinpoint exactly where the "
+    "prescriber sees patients, and they are not patient locations."
 )
 
 US_STATES = {
@@ -75,6 +90,72 @@ def search_city_drug(year: int, state: str, city: str, drug: str, top_n: int) ->
     ).fetchdf()
 
 
+@st.cache_data(show_spinner="Loading cities…", ttl=86400)
+def load_cities() -> pd.DataFrame:
+    con = _get_con()
+    return con.execute(
+        f"SELECT State, City, Latitude, Longitude FROM read_parquet('{CITIES_URL}') WHERE Latitude IS NOT NULL"
+    ).fetchdf()
+
+
+@st.cache_data(show_spinner="Querying…", ttl=3600)
+def search_radius(
+    year: int, state: str, center_city: str, radius_mi: int, drug: str, top_n: int
+) -> pd.DataFrame:
+    cities = load_cities()
+    match = cities[(cities["State"] == state) & (cities["City"] == center_city)]
+    if match.empty:
+        raise ValueError(f"No coordinates for {center_city}, {state}.")
+    lat, lng = float(match.iloc[0]["Latitude"]), float(match.iloc[0]["Longitude"])
+    lat_delta = radius_mi / 69.0
+    lng_delta = radius_mi / max(1e-3, 69.0 * math.cos(math.radians(lat)))
+
+    con = _get_con()
+    url = _state_url(year, state)
+    return con.execute(
+        f"""
+        WITH nearby AS (
+            SELECT
+                City, Latitude, Longitude,
+                3959 * acos(LEAST(1.0,
+                    cos(radians(?)) * cos(radians(Latitude))
+                      * cos(radians(Longitude) - radians(?))
+                    + sin(radians(?)) * sin(radians(Latitude))
+                )) AS distance_mi
+            FROM read_parquet('{CITIES_URL}')
+            WHERE State = ?
+              AND Latitude BETWEEN ? AND ?
+              AND Longitude BETWEEN ? AND ?
+        )
+        SELECT
+            p."Prescriber Name",
+            p."Prescriber NPI",
+            p.City,
+            ROUND(n.distance_mi, 1) AS "Distance (mi)",
+            p.Specialty,
+            p."Brand Name",
+            p."Generic Name",
+            p."Total Claims",
+            p."Total Drug Cost"
+        FROM read_parquet('{url}') p
+        JOIN nearby n USING (City)
+        WHERE n.distance_mi <= ?
+          AND (p."Brand Name" ILIKE ? OR p."Generic Name" ILIKE ?)
+        ORDER BY p."Total Drug Cost" DESC
+        LIMIT ?
+        """,
+        [
+            lat, lng, lat,
+            state,
+            lat - lat_delta, lat + lat_delta,
+            lng - lng_delta, lng + lng_delta,
+            radius_mi,
+            f"%{drug}%", f"%{drug}%",
+            top_n,
+        ],
+    ).fetchdf()
+
+
 @st.cache_data(show_spinner="Querying…", ttl=3600)
 def search_provider_drugs(year: int, state: str, name: str, top_n: int) -> pd.DataFrame:
     con = _get_con()
@@ -106,6 +187,8 @@ def _format_currency(df: pd.DataFrame) -> pd.io.formats.style.Styler:
         fmt["Total Claims"] = "{:,.0f}"
     if "Total Beneficiaries" in df.columns:
         fmt["Total Beneficiaries"] = "{:,.0f}"
+    if "Distance (mi)" in df.columns:
+        fmt["Distance (mi)"] = "{:.1f}"
     return df.style.format(fmt)
 
 
@@ -117,8 +200,12 @@ st.caption(
 
 mode = st.radio(
     "Search mode",
-    ["City + Drug → Top Prescribers", "Provider Name → Top Drugs"],
-    horizontal=True,
+    [
+        "City + Drug → Top Prescribers",
+        "City + Radius + Drug → Top Prescribers Within Radius",
+        "Provider Name → Top Drugs",
+    ],
+    horizontal=False,
 )
 
 control_cols = st.columns([1, 2, 1])
@@ -136,7 +223,7 @@ with control_cols[2]:
 
 st.divider()
 
-if mode.startswith("City"):
+if mode == "City + Drug → Top Prescribers":
     q_cols = st.columns(2)
     with q_cols[0]:
         city = st.text_input("City", placeholder="e.g. Ann Arbor")
@@ -156,6 +243,49 @@ if mode.startswith("City"):
             st.dataframe(_format_currency(df), use_container_width=True, hide_index=True)
     else:
         st.info("Enter a city and a drug name to search.")
+
+elif mode == "City + Radius + Drug → Top Prescribers Within Radius":
+    cities = load_cities()
+    state_cities = sorted(cities[cities["State"] == state]["City"].unique().tolist())
+    if not state_cities:
+        st.warning(f"No geocoded cities available for {US_STATES[state]}.")
+        st.stop()
+
+    q_cols = st.columns([2, 1, 2])
+    with q_cols[0]:
+        center_city = st.selectbox(
+            "Center city",
+            options=state_cities,
+            index=state_cities.index("Canton") if "Canton" in state_cities else 0,
+            help=RADIUS_HELP,
+        )
+    with q_cols[1]:
+        radius_mi = st.selectbox("Radius (mi)", RADIUS_OPTIONS, index=2, help=RADIUS_HELP)
+    with q_cols[2]:
+        drug = st.text_input("Drug (brand or generic)", placeholder="e.g. Soliris", key="radius_drug")
+
+    st.caption(
+        "Same-state radius search. Cities outside the chosen state are not included; "
+        "cross-state coverage will come in a later iteration."
+    )
+
+    if center_city and drug:
+        try:
+            df = search_radius(year, state, center_city, radius_mi, drug.strip(), top_n)
+        except Exception as exc:
+            st.error(f"Query failed: {exc}")
+            st.stop()
+        if df.empty:
+            st.info(
+                f"No prescribers of '{drug}' within {radius_mi} mi of {center_city}, {US_STATES[state]} ({year})."
+            )
+        else:
+            st.success(
+                f"Top {len(df)} prescribers of {drug} within {radius_mi} mi of {center_city}, {US_STATES[state]} ({year})"
+            )
+            st.dataframe(_format_currency(df), use_container_width=True, hide_index=True)
+    else:
+        st.info("Pick a center city, radius, and drug to search.")
 
 else:
     name = st.text_input("Provider name", placeholder="e.g. Smith")
