@@ -151,8 +151,6 @@ USA_MAP_STATE_CODES = {
 }
 
 
-st.set_page_config(page_title=APP_TITLE, layout="wide", initial_sidebar_state="collapsed")
-
 st.markdown(
     """
 <style>

@@ -6,8 +6,6 @@ import duckdb
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="Provider Search", layout="wide")
-
 HF_DATASET_BASE = (
     "https://huggingface.co/datasets/mbateya/medicare_part_d_prescribers/resolve/main"
 )
