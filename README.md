@@ -1,34 +1,56 @@
 # Medicare Part D Prescribing Dashboard
 
-Interactive Streamlit dashboard for exploring Medicare Part D prescribing patterns across 2021, 2022, and 2023.
+Interactive Streamlit app for exploring Medicare Part D prescribing patterns across 2021, 2022, and 2023.
 
-The app summarizes prescription drug cost and utilization by year, drug, specialty, and state. It can build an optimized parquet cache from raw Medicare Part D CSV, TXT, TSV, or parquet files on first run.
+The app has two pages, accessible from a top navigation bar:
+
+- **Dashboard** — aggregate analysis of drug costs, claims, and specialty patterns
+- **Provider Search** — drill down to individual prescribers by city, radius, or name
+
+Data is hosted on Hugging Face and downloaded once per container into a local cache, so cold starts pay a small one-time cost and subsequent reads are local-disk speed.
 
 ## Features
 
+### Dashboard
+
 - Global filters for year, state, specialty, brand name, and generic name
 - Total drug cost and total claims summary cards
-- Top drugs by year, grouped by brand or generic name
+- Top drugs by year (brand or generic), with bar / treemap toggle
 - Top specialties by year
 - Yearly trend charts for selected drugs
-- Local parquet cache generation for faster repeat loading
+- US state choropleth with a **Total Cost / Per Capita Cost** toggle (Census Bureau Vintage 2023 population estimates)
+- **Ask AI** chatbot (Claude Haiku 4.5) that writes DuckDB SQL against the dataset and explains results in plain English
 
-## Data
+### Provider Search
 
-This project expects Medicare Part D source files for 2021, 2022, and 2023 in the repository root. The app detects files whose names include one of those years and whose extension is `.csv`, `.txt`, `.tsv`, or `.parquet`.
+- City + Drug → top prescribers in matching cities
+- City + Radius (5/10/25/50/100 mi) + Drug → top prescribers within a centroid-distance radius
+- Provider Name → top drugs prescribed by matching providers
+- Hover help explains the centroid-based, all-or-nothing-per-city radius behavior
 
-The raw CMS CSV files and generated parquet caches are intentionally ignored by git because they are very large. Keep them locally when running the dashboard, but do not commit them to GitHub.
+## Data Architecture
 
-Expected raw column names include:
+Source of truth for all production data is the public Hugging Face dataset [`mbateya/medicare_part_d_prescribers`](https://huggingface.co/datasets/mbateya/medicare_part_d_prescribers). The app fetches files via `huggingface_hub.hf_hub_download`, which caches under `~/.cache/huggingface/hub/`, so each file is downloaded at most once per container.
 
-- `Prscrbr_State_Abrvtn`
-- `Prscrbr_Type`
-- `Brnd_Name`
-- `Gnrc_Name`
-- `Tot_Clms`
-- `Tot_30day_Fills`
-- `Tot_Day_Suply`
-- `Tot_Drug_Cst`
+| File on HF | Size | Purpose |
+|---|---|---|
+| `processed/medicare_partd_2021_2023.parquet` | 69 MB | Aggregated rows used by the Dashboard and Ask AI's DuckDB view |
+| `processed/medicare_partd_top_providers_by_drug_2021_2023.parquet` | 14 MB | Top-providers-by-drug summary used by the Dashboard |
+| `prescribers/year=YYYY/State=XX/data_0.parquet` | partitioned ~78M rows | Per-prescriber rows used by Provider Search (city + drug, radius, provider name) |
+| `cities.parquet` | 403 KB | (State, City) → (Latitude, Longitude) lookup for radius search; built from GeoNames |
+| `state_population.parquet` | 4.5 KB | Census Bureau Vintage 2023 state populations for per-capita map |
+| `drug_atc.parquet` | 82 KB | Generic Name → WHO ATC Levels 1-4 codes/names; built from NLM RxNav |
+
+Local-only artifacts (gitignored):
+
+- `data/processed/*.parquet` — optional dev cache; if present, the app prefers these over HF downloads
+- `MUP_DPR_*.csv` — raw CMS files used only by the offline build scripts
+- `hf_staging/` — output of build scripts before upload
+- `~/.cache/huggingface/hub/` — automatic HF download cache
+
+Source-controlled data:
+
+- `data/drug_atc_overrides.csv` — manual ATC assignments for drugs the algorithmic pipeline can't resolve (TPN solutions, vaccines without ATC links, complex combos, etc.)
 
 ## Setup
 
@@ -45,28 +67,62 @@ Install dependencies:
 pip install -r requirements.txt
 ```
 
-Run the dashboard:
+Configure secrets at `.streamlit/secrets.toml` (gitignored):
+
+```toml
+ANTHROPIC_API_KEY = "sk-ant-..."   # required for the Ask AI chatbot
+HF_TOKEN          = "hf_..."        # required only for build scripts that upload to HF
+```
+
+Run the app:
 
 ```bash
-streamlit run Med_D_dashboard.py
+streamlit run app.py
 ```
+
+The first page load downloads ~83 MB of dashboard parquets from HF into the local cache. Provider Search downloads each state-year partition lazily on demand (~5-50 MB per state).
 
 ## Project Structure
 
 ```text
 .
-├── Med_D_dashboard.py
-├── medicare_D_dashboard.ipynb
-├── requirements.txt
+├── app.py                          # Streamlit entry point; declares pages + nav
+├── Med_D_dashboard.py              # Dashboard page
+├── build_provider_summary.py       # offline ETL: top-providers-by-drug rollup
+├── pages/
+│   └── 1_Provider_Search.py        # Provider Search page
 ├── data/
-│   └── processed/
+│   ├── drug_atc_overrides.csv      # tracked manual ATC overrides
+│   └── processed/                  # gitignored local parquet cache (optional)
+├── scripts/
+│   ├── build_hf_prescriber_dataset.py   # builds the HF prescribers/year=…/State=… partitions
+│   ├── upload_processed_to_hf.py        # uploads aggregated dashboard parquets to HF
+│   ├── build_geocoded_cities.py         # builds cities.parquet from GeoNames
+│   ├── build_state_population.py        # builds state_population.parquet from Census Vintage 2023
+│   └── build_drug_atc.py                # builds drug_atc.parquet via NLM RxNav + overrides
+├── requirements.txt
 └── README.md
 ```
 
-## Cache Files
+## Streamlit Cloud Deployment
 
-On first run, the app creates one parquet cache file under `data/processed/`:
+The deployed app entry point is `app.py`. Streamlit Cloud's app settings should have:
 
-- `medicare_partd_2021_2023.parquet`
+- **Main file path:** `app.py`
+- **Python version:** 3.12 (or any 3.11+ that satisfies `requirements.txt`)
+- **Secrets:** paste the contents of your local `.streamlit/secrets.toml` into the Secrets tab
 
-Prescriber-level cache files are intentionally ignored by git because they are too large for a normal GitHub and Streamlit Cloud deployment.
+## Rebuilding the HF dataset
+
+The Hugging Face artifacts only change when the underlying data changes (annual CMS release, new provider-level partitions, or refreshed lookups). The relevant scripts are:
+
+| Script | When to run |
+|---|---|
+| `scripts/build_hf_prescriber_dataset.py` | New year of CMS Part D Prescriber data |
+| `build_provider_summary.py` | Same trigger; produces the top-providers-by-drug rollup |
+| `scripts/upload_processed_to_hf.py` | After regenerating the rolled-up dashboard parquets locally |
+| `scripts/build_geocoded_cities.py` | Rare — only if GeoNames updates significantly |
+| `scripts/build_state_population.py` | Annually, when Census releases new population estimates |
+| `scripts/build_drug_atc.py` | After adding new entries to `data/drug_atc_overrides.csv`, or annually for new drug approvals |
+
+All scripts read `HF_TOKEN` from the environment or `.streamlit/secrets.toml`. The drug-ATC builder caches every RxNav response under `hf_staging/rxnav_cache/`, so iterative re-runs after editing the override CSV are nearly instant.
