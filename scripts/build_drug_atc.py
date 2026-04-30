@@ -48,6 +48,7 @@ REPO_DIR = Path(__file__).resolve().parent.parent
 STAGING = REPO_DIR / "hf_staging"
 CACHE_DIR = STAGING / "rxnav_cache"
 GENERICS_CACHE = STAGING / "unique_generics.json"
+OVERRIDES_CSV = REPO_DIR / "data" / "drug_atc_overrides.csv"
 SECRETS_FILE = REPO_DIR / ".streamlit" / "secrets.toml"
 
 DEFAULT_DATASET_ID = "mbateya/medicare_part_d_prescribers"
@@ -129,20 +130,96 @@ CMS_ALIASES = {
     "glycopyr": "glycopyrronium",  # INN; RxNorm uses this in combo names
     "butalb": "butalbital",
     "bictegrav": "bictegravir",
+    "emtri": "emtricitabine",
     "emtricit": "emtricitabine",
+    "emtricitab": "emtricitabine",
+    "emtricita": "emtricitabine",
+    "tenof": "tenofovir",
     "tenofov": "tenofovir",
+    "tenofovr": "tenofovir",
+    "tenofo": "tenofovir",
+    "drospir": "drospirenone",
+    "levomefol": "levomefolate",
+    "ala": "alafenamide",
+    "alaf": "alafenamide",
+    "alafen": "alafenamide",
+    "alafenam": "alafenamide",
+    "diso": "disoproxil",
+    "disop": "disoproxil",
+    "df": "disoproxil",
+    "tdf": "disoproxil",
     "metronid": "metronidazole",
+    "elviteg": "elvitegravir",
+    "cob": "cobicistat",
+    "lamivu": "lamivudine",
+    "rilpiviri": "rilpivirine",
+    "doravirine": "doravirine",  # already full but listed for visibility
+    "asa": "aspirin",
 }
 
 # Regexes used by normalize_cms.
 RE_PAREN = re.compile(r"\([^)]*\)")
 RE_BIOSIM_SUFFIX = re.compile(r"-[a-z]{4}\b")
-RE_PCT = re.compile(r"\b\d+(?:\.\d+)?\s*%")  # "5%", "0.9 %"
-RE_IN_DILUENT = re.compile(
-    r"\bin\s+\d*(?:\.\d+)?\s*%?\s*(sod chlor|sodium chloride|dextrose|polysorbat\w*|d\d+w|nacl|saline|ethanol|water|glycine)\b"
+RE_PCT = re.compile(r"\d+(?:\.\d+)?\s*%")  # "5%", "0.9 %", "5%" with no leading boundary
+# Keywords that indicate a string is just IV diluent.
+DILUENT_KEYWORDS = (
+    "dextrose", "sod chlor", "sodium chloride", "saline", "nacl",
+    "ringer", "water", "glycine", "polysorbat", "iso-osm", "is-osm",
+    "isotonic", "iso-osmotic",
 )
+# Slash-separated components that are pure diluents → drop the entire component.
+DILUENT_COMPONENTS = {
+    "dextrose", "dextrose,iso", "iso-osm dextrose", "dextrose iso",
+    "dextrose injection", "dextrose5", "dextrose 5", "dextrose 10",
+    "sod chlor", "sodium chloride", "0.9% sod chlor", "0.9% sodium chloride",
+    "nacl", "saline", "normal saline", "ns",
+    "d5w", "d10w", "d15w", "d20w", "d14w", "d25w",
+    "lactated ringers", "lactated ringer", "ringers",
+    "iso-osm", "iso-osmotic", "isotonic",
+    "water", "sterile water",
+    "pf",  # preservative-free indicator as a standalone component
+    "neb.accessr", "neb accessories",
+    "emoll", "emollient", "emollient base", "shower cap",
+}
 RE_NONALPHA = re.compile(r"[^a-z0-9 -]")
 RE_WS = re.compile(r"\s+")
+
+# Known multi-word ingredients. After tokenizing and alias-expanding, adjacent
+# tokens that appear in this set are re-joined into a single ingredient string,
+# so RxNorm's canonical "emtricitabine / tenofovir alafenamide" matches.
+COMPOUND_INGREDIENTS = {
+    ("tenofovir", "alafenamide"),
+    ("tenofovir", "disoproxil"),
+    ("ethinyl", "estradiol"),
+    ("amphotericin", "b"),
+    ("polymyxin", "b"),
+    ("dimethyl", "fumarate"),
+    ("ferric", "carboxymaltose"),
+    ("ferric", "pyrophosphate"),
+    ("ferrous", "fumarate"),
+    ("ferrous", "sulfate"),
+    ("calcium", "carbonate"),
+    ("magnesium", "oxide"),
+}
+
+
+def collapse_compound_ingredients(tokens: list[str]) -> list[str]:
+    """Re-join known multi-word ingredients ('tenofovir alafenamide')."""
+    out: list[str] = []
+    i = 0
+    while i < len(tokens):
+        if i + 1 < len(tokens) and (tokens[i], tokens[i + 1]) in COMPOUND_INGREDIENTS:
+            out.append(f"{tokens[i]} {tokens[i + 1]}")
+            i += 2
+        else:
+            out.append(tokens[i])
+            i += 1
+    return out
+
+
+def looks_like_diluent_tail(tail: str) -> bool:
+    """Return True if the string after 'in' is just IV diluent."""
+    return any(kw in tail for kw in DILUENT_KEYWORDS)
 
 
 def load_token() -> str:
@@ -224,8 +301,22 @@ def normalize_cms(name: str) -> str:
     s = name.lower()
     s = RE_PAREN.sub(" ", s)               # drop parentheticals
     s = RE_BIOSIM_SUFFIX.sub("", s)        # drop FDA biosimilar suffix like -epbx
+    # "<drug> in <diluent stuff>" → keep "<drug>". Apply if the tail is
+    # recognizably IV vehicle (dextrose / saline / NaCl / ringer / water / ...).
+    if " in " in s:
+        head, _, tail = s.partition(" in ")
+        if looks_like_diluent_tail(tail):
+            s = head
+    # Drop slash-separated components that are pure diluents (e.g. "Dextrose,iso").
+    if "/" in s:
+        kept = []
+        for comp in s.split("/"):
+            comp_clean = RE_PCT.sub("", comp).strip(" ,.")
+            if comp_clean in DILUENT_COMPONENTS:
+                continue
+            kept.append(comp)
+        s = " ".join(kept)
     s = RE_PCT.sub(" ", s)                 # drop percentage tokens
-    s = RE_IN_DILUENT.sub(" ", s)          # drop "in 0.9% sod chlor" and friends
     s = s.replace("/", " ").replace(",", " ")
     # split-only on hyphens that look like separators (between two letter tokens)
     s = re.sub(r"(?<=[a-z])-(?=[a-z])", " ", s)
@@ -352,6 +443,26 @@ def pick_primary_class(classes: list[dict], prefer_combo: bool) -> dict:
     return by_id[best_id]
 
 
+def load_overrides(class_map: dict[str, str]) -> dict[str, dict]:
+    """Read manual overrides from data/drug_atc_overrides.csv.
+
+    Format: generic_name, atc_level_4_code, [atc_level_4_name], [notes].
+    Returns {generic_name: {match_method, atc_level_*_code, atc_level_*_name}}.
+    """
+    if not OVERRIDES_CSV.exists():
+        return {}
+    overrides: dict[str, dict] = {}
+    df = pd.read_csv(OVERRIDES_CSV)
+    for _, row in df.iterrows():
+        name = str(row["generic_name"]).strip()
+        code = str(row.get("atc_level_4_code", "")).strip()
+        if not name or not code or code.lower() == "nan":
+            continue
+        levels = derive_levels(code, class_map)
+        overrides[name] = {"match_method": "override", **levels}
+    return overrides
+
+
 def derive_levels(class_id: str, class_map: dict[str, str]) -> dict:
     lengths = {1: 1, 2: 3, 3: 4, 4: 5}
     out = {}
@@ -383,8 +494,9 @@ def resolve_to_atc(name: str, class_map: dict[str, str]) -> tuple[dict | None, s
             method = "normalized"
     if not cui and norm:
         # RxNorm combination canonical form: alphabetically-sorted ingredients
-        # joined by " / ", e.g. "metformin / sitagliptin".
-        words = norm.split()
+        # joined by " / ", e.g. "metformin / sitagliptin". Re-join known
+        # multi-word ingredients first so "tenofovir alafenamide" stays paired.
+        words = collapse_compound_ingredients(norm.split())
         if len(words) >= 2:
             combo = " / ".join(sorted(words))
             cui = find_rxcui(combo)
@@ -428,23 +540,34 @@ def main() -> None:
     class_map = fetch_all_atc_classes()
     if not class_map:
         raise SystemExit("Failed to fetch ATC class catalog from RxClass.")
+    overrides = load_overrides(class_map)
+    print(f"Loaded {len(overrides)} manual overrides from {OVERRIDES_CSV.name}")
 
     qc_rows: list[dict] = []
     matched_rows: list[dict] = []
     n = len(generics)
     print(f"\nResolving {n:,} generic names via RxNav…")
     t0 = time.time()
-    counts = {"matched": 0, "no_rxcui": 0, "no_atc": 0}
+    counts = {"matched": 0, "no_rxcui": 0, "no_atc": 0, "override": 0}
     for i, name in enumerate(generics, 1):
         if i % 200 == 0:
             elapsed = time.time() - t0
             print(
                 f"  {i:,}/{n:,} matched={counts['matched']:,} "
+                f"override={counts['override']:,} "
                 f"no_rxcui={counts['no_rxcui']:,} no_atc={counts['no_atc']:,} "
                 f"({elapsed:.0f}s)"
             )
-        record, status = resolve_to_atc(name, class_map)
-        counts[status] += 1
+
+        if name in overrides:
+            record = dict(overrides[name])
+            status = "matched"
+            counts["override"] += 1
+            counts["matched"] += 1
+        else:
+            record, status = resolve_to_atc(name, class_map)
+            counts[status] += 1
+
         qc = {"generic_name": name, "status": status}
         if record:
             qc.update(record)
@@ -455,8 +578,9 @@ def main() -> None:
     elapsed = time.time() - t0
     print(
         f"\nDone in {elapsed:.0f}s. matched={counts['matched']:,}/{n:,} "
-        f"({100 * counts['matched'] / n:.1f}%), no_rxcui={counts['no_rxcui']:,}, "
-        f"no_atc={counts['no_atc']:,}"
+        f"({100 * counts['matched'] / n:.1f}%) "
+        f"[algorithmic={counts['matched']-counts['override']}, override={counts['override']}], "
+        f"no_rxcui={counts['no_rxcui']:,}, no_atc={counts['no_atc']:,}"
     )
 
     matched_df = pd.DataFrame(matched_rows)
