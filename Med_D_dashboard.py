@@ -29,6 +29,7 @@ HF_DATASET_ID = "mbateya/medicare_part_d_prescribers"
 HF_PROCESSED_FILE = "processed/medicare_partd_2021_2023.parquet"
 HF_PROVIDER_SUMMARY_FILE = "processed/medicare_partd_top_providers_by_drug_2021_2023.parquet"
 HF_STATE_POPULATION_FILE = "state_population.parquet"
+HF_DRUG_ATC_FILE = "drug_atc.parquet"
 
 
 @st.cache_resource(show_spinner="Downloading processed dataset…")
@@ -61,6 +62,30 @@ def load_state_population() -> pd.DataFrame:
         repo_type="dataset",
     )
     return pd.read_parquet(path)
+
+
+OTHERS_ATC_LABEL = "Others (unmapped)"
+
+
+@st.cache_data(show_spinner="Loading drug → ATC mapping…", ttl=86400)
+def load_drug_atc() -> pd.DataFrame:
+    path = hf_hub_download(
+        repo_id=HF_DATASET_ID,
+        filename=HF_DRUG_ATC_FILE,
+        repo_type="dataset",
+    )
+    df = pd.read_parquet(path)
+    return df[["Generic Name", "atc_level_2_code", "atc_level_2_name"]].copy()
+
+
+def _attach_atc_level_2(df: pd.DataFrame) -> pd.DataFrame:
+    atc = load_drug_atc()
+    merged = df.merge(atc, on="Generic Name", how="left")
+    merged["Therapeutic Class"] = (
+        merged["atc_level_2_name"].fillna("").str.title().replace("", OTHERS_ATC_LABEL)
+    )
+    merged.loc[merged["atc_level_2_code"].isna(), "Therapeutic Class"] = OTHERS_ATC_LABEL
+    return merged
 SUPPORTED_EXTENSIONS = {".csv", ".txt", ".tsv", ".parquet"}
 TARGET_YEARS = {2021, 2022, 2023}
 
@@ -559,6 +584,13 @@ def summarize_top_specialties(df: pd.DataFrame, top_n: int) -> pd.DataFrame:
     return _annual_top_n_full_history(summary, "Specialty", "Total Drug Cost", top_n)
 
 
+def summarize_top_therapeutic_classes(df: pd.DataFrame, top_n: int) -> pd.DataFrame:
+    """Top ATC Level 2 therapeutic groups; unmapped generics fall under 'Others'."""
+    df = _attach_atc_level_2(df)
+    summary = _summarize(df, ["Year", "Therapeutic Class"])
+    return _annual_top_n_full_history(summary, "Therapeutic Class", "Total Drug Cost", top_n)
+
+
 def summarize_yearly_spending(df: pd.DataFrame) -> pd.DataFrame:
     return _summarize(df, ["Year"]).sort_values("Year")
 
@@ -853,7 +885,21 @@ def fmt_currency(val: float) -> str:
     return f"${val:.0f}"
 
 
-def render_treemap(df: pd.DataFrame, name_col: str, top_n: int, title: str):
+DRUG_TREEMAP_PALETTE = ["#185fa5", "#378add", "#b5d4f4", "#7f77dd", "#1d9e75", "#ef9f27", "#d85a30"]
+SPECIALTY_TREEMAP_PALETTE = ["#c0392b", "#e67e22", "#f39c12", "#d35400", "#cc6633", "#f5c178", "#a44a3f"]
+THERAPEUTIC_TREEMAP_PALETTE = ["#118a7e", "#1d9e75", "#3aae8e", "#67c89c", "#16a085", "#27ae60", "#a8e2c1"]
+DRUG_YEAR_PALETTE = ["#b5d4f4", "#378add", "#185fa5"]
+SPECIALTY_YEAR_PALETTE = ["#f5c178", "#e67e22", "#c0392b"]
+THERAPEUTIC_YEAR_PALETTE = ["#a8e2c1", "#3aae8e", "#118a7e"]
+
+
+def render_treemap(
+    df: pd.DataFrame,
+    name_col: str,
+    top_n: int,
+    title: str,
+    palette: list[str] | None = None,
+):
     totals = (
         df.groupby(name_col, dropna=False)["Total Drug Cost"]
         .sum()
@@ -862,7 +908,7 @@ def render_treemap(df: pd.DataFrame, name_col: str, top_n: int, title: str):
     )
     top = totals.head(top_n).copy()
     others_cost = totals.iloc[top_n:]["Total Drug Cost"].sum()
-    palette = ["#185fa5", "#378add", "#b5d4f4", "#7f77dd", "#1d9e75", "#ef9f27", "#d85a30"]
+    palette = palette or DRUG_TREEMAP_PALETTE
     colors = [palette[i % len(palette)] for i in range(len(top))]
     top_abbrev = [fmt_currency(v) for v in top["Total Drug Cost"]]
 
@@ -1041,14 +1087,15 @@ def render_charts(
     color: str,
     title: str,
     orientation: str = "v",
+    year_palette: list[str] | None = None,
 ):
     chart_df = df.copy()
     if color == "Year":
         chart_df[color] = chart_df[color].astype(str)
     year_values = sorted(chart_df[color].dropna().unique().tolist()) if color == "Year" else []
-    year_palette = ["#b5d4f4", "#378add", "#185fa5"]
+    palette = year_palette or DRUG_YEAR_PALETTE
     color_map = {
-        year: year_palette[index % len(year_palette)]
+        year: palette[index % len(palette)]
         for index, year in enumerate(year_values)
     }
 
@@ -1718,6 +1765,77 @@ def main() -> None:
 
     st.divider()
 
+    section_heading("Annual top therapeutic classes")
+    ta_ctrl_cols = st.columns([3, 1])
+    with ta_ctrl_cols[0]:
+        top_ta_n = render_top_n_control(
+            "Show therapeutic classes appearing in each year's top:",
+            "top_ta_n",
+        )
+    with ta_ctrl_cols[1]:
+        ta_chart_type = st.segmented_control(
+            "Chart type", options=["Bar", "Treemap"], default="Treemap", key="ta_chart_type"
+        )
+    ta_section_df = _attach_atc_level_2(filtered_df)
+    top_therapeutic_classes = summarize_top_therapeutic_classes(filtered_df, top_ta_n)
+    ta_context = _filter_context(selected_years, selected_states, selected_specialties)
+    ta_title = _section_title(
+        "Top therapeutic classes (ATC Level 2) by total cost", context=ta_context
+    )
+    st.caption(ta_context)
+    st.caption(
+        f"A therapeutic class is included if it ranks in the top {top_ta_n} for any "
+        "selected year. Drugs whose generic name isn't yet mapped to an ATC class "
+        f"fall under '{OTHERS_ATC_LABEL}'."
+    )
+    if not top_therapeutic_classes.empty:
+        latest_year = top_therapeutic_classes["Year"].max()
+        top_ta = (
+            top_therapeutic_classes[top_therapeutic_classes["Year"] == latest_year]
+            .sort_values("Total Drug Cost", ascending=False)
+            .iloc[0]
+        )
+        cost_b = top_ta["Total Drug Cost"] / 1e9
+        insight_strip(
+            f"<strong>Highest spending therapeutic class in {int(latest_year)}:</strong> "
+            f"{top_ta['Therapeutic Class']} at <strong>${cost_b:.1f}B</strong> in total drug costs."
+        )
+    if ta_chart_type == "Treemap":
+        ta_fig = render_treemap(
+            ta_section_df, "Therapeutic Class", top_ta_n, ta_title,
+            palette=THERAPEUTIC_TREEMAP_PALETTE,
+        )
+    else:
+        ta_fig = render_charts(
+            top_therapeutic_classes,
+            x="Total Drug Cost",
+            y="Therapeutic Class",
+            color="Year",
+            title=ta_title,
+            orientation="h",
+            year_palette=THERAPEUTIC_YEAR_PALETTE,
+        )
+    chart_card(ta_fig)
+    st.dataframe(
+        format_tables(
+            top_therapeutic_classes[
+                [
+                    "Year",
+                    "Therapeutic Class",
+                    "Total Drug Cost",
+                    "Total Claims",
+                    "Total 30-Day Fills",
+                    "Cost per Claim",
+                    "Cost per 30-Day Fill",
+                ]
+            ]
+        ),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    st.divider()
+
     section_heading("Annual top specialties")
     spec_ctrl_cols = st.columns([3, 1])
     with spec_ctrl_cols[0]:
@@ -1751,7 +1869,10 @@ def main() -> None:
             f"{top_spec['Specialty']} at <strong>${cost_b:.1f}B</strong> in total drug costs."
         )
     if specialty_chart_type == "Treemap":
-        specialty_fig = render_treemap(specialty_section_df, "Specialty", top_specialty_n, specialty_title)
+        specialty_fig = render_treemap(
+            specialty_section_df, "Specialty", top_specialty_n, specialty_title,
+            palette=SPECIALTY_TREEMAP_PALETTE,
+        )
     else:
         specialty_fig = render_charts(
             top_specialties,
@@ -1760,6 +1881,7 @@ def main() -> None:
             color="Year",
             title=specialty_title,
             orientation="h",
+            year_palette=SPECIALTY_YEAR_PALETTE,
         )
     chart_card(specialty_fig)
     st.dataframe(
