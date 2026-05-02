@@ -2,10 +2,11 @@
 
 Interactive Streamlit app for exploring Medicare Part D prescribing patterns across 2021, 2022, and 2023.
 
-The app has two pages, accessible from a top navigation bar:
+The app has three pages, accessible from a top navigation bar:
 
-- **Dashboard** — aggregate analysis of drug costs, claims, and specialty patterns
-- **Provider Search** — drill down to individual prescribers by city, radius, or name
+- **Part D Dashboard** — aggregate analysis of pharmacy-dispensed drug costs, claims, and specialty patterns
+- **Part B Drugs** — annual Medicare Part B (clinician-administered) drug spending by HCPCS code, brand, and generic
+- **Provider Search** — drill down to individual Part D prescribers by city, radius, or name
 
 Data is hosted on Hugging Face and downloaded once per container into a local cache, so cold starts pay a small one-time cost and subsequent reads are local-disk speed.
 
@@ -20,6 +21,14 @@ Data is hosted on Hugging Face and downloaded once per container into a local ca
 - Yearly trend charts for selected drugs
 - US state choropleth with a **Total Cost / Per Capita Cost** toggle (Census Bureau Vintage 2023 population estimates)
 - **Ask AI** chatbot (Claude Haiku 4.5) that writes DuckDB SQL against the dataset and explains results in plain English
+
+### Part B Drugs
+
+- Year filter and optional generic-name filter
+- KPI strip: total Part B drug spend, total claims, total beneficiaries, distinct drugs
+- Top N drugs by spend (Bar / Treemap toggle, with distinct purple palette so it doesn't blur with Part D)
+- Yearly trend chart for selected drugs
+- HCPCS-level drill-down table (one row per HCPCS code × brand × year)
 
 ### Provider Search
 
@@ -40,6 +49,7 @@ Source of truth for all production data is the public Hugging Face dataset [`mba
 | `cities.parquet` | 403 KB | (State, City) → (Latitude, Longitude) lookup for radius search; built from GeoNames |
 | `state_population.parquet` | 4.5 KB | Census Bureau Vintage 2023 state populations for per-capita map |
 | `drug_atc.parquet` | 82 KB | Generic Name → WHO ATC Levels 1-4 codes/names; built from NLM RxNav |
+| `part_b_drug_spending.parquet` | 229 KB | Annual Medicare Part B drug spending by HCPCS code, brand, generic (long format, 2019-2023) |
 
 Local-only artifacts (gitignored):
 
@@ -90,7 +100,8 @@ The first page load downloads ~83 MB of dashboard parquets from HF into the loca
 ├── Med_D_dashboard.py              # Dashboard page
 ├── build_provider_summary.py       # offline ETL: top-providers-by-drug rollup
 ├── pages/
-│   └── 1_Provider_Search.py        # Provider Search page
+│   ├── 1_Provider_Search.py        # Provider Search page
+│   └── 2_Part_B_Drugs.py           # Part B drug spending page
 ├── data/
 │   ├── drug_atc_overrides.csv      # tracked manual ATC overrides
 │   └── processed/                  # gitignored local parquet cache (optional)
@@ -99,7 +110,8 @@ The first page load downloads ~83 MB of dashboard parquets from HF into the loca
 │   ├── upload_processed_to_hf.py        # uploads aggregated dashboard parquets to HF
 │   ├── build_geocoded_cities.py         # builds cities.parquet from GeoNames
 │   ├── build_state_population.py        # builds state_population.parquet from Census Vintage 2023
-│   └── build_drug_atc.py                # builds drug_atc.parquet via NLM RxNav + overrides
+│   ├── build_drug_atc.py                # builds drug_atc.parquet via NLM RxNav + overrides
+│   └── build_part_b_drug_spending.py    # builds part_b_drug_spending.parquet from CMS Part B
 ├── requirements.txt
 └── README.md
 ```
@@ -124,5 +136,6 @@ The Hugging Face artifacts only change when the underlying data changes (annual 
 | `scripts/build_geocoded_cities.py` | Rare — only if GeoNames updates significantly |
 | `scripts/build_state_population.py` | Annually, when Census releases new population estimates |
 | `scripts/build_drug_atc.py` | After adding new entries to `data/drug_atc_overrides.csv`, or annually for new drug approvals |
+| `scripts/build_part_b_drug_spending.py` | Annually, when CMS releases the new run-year Part B Drug Spending file (around April-May). Update `CMS_URL` in the script to the new run-year URL. |
 
 All scripts read `HF_TOKEN` from the environment or `.streamlit/secrets.toml`. The drug-ATC builder caches every RxNav response under `hf_staging/rxnav_cache/`, so iterative re-runs after editing the override CSV are nearly instant.

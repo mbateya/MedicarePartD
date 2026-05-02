@@ -8,7 +8,7 @@ st.set_page_config(
 
 dashboard = st.Page(
     "Med_D_dashboard.py",
-    title="Dashboard",
+    title="Part D Dashboard",
     icon=":material/insights:",
     default=True,
 )
@@ -17,6 +17,11 @@ provider_search = st.Page(
     title="Provider Search",
     icon=":material/search:",
 )
+part_b_drugs = st.Page(
+    "pages/2_Part_B_Drugs.py",
+    title="Part B Drugs",
+    icon=":material/medication:",
+)
 
-nav = st.navigation([dashboard, provider_search], position="top")
+nav = st.navigation([dashboard, part_b_drugs, provider_search], position="top")
 nav.run()
