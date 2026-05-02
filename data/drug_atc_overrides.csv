@@ -3,12 +3,14 @@ Aa 4.25%/Calcium/Lytes/Dex 10%,V06DE,"Amino acids/carbohydrates/minerals/vitamin
 Aa 5 %/Calcium/Lytes/Dext 20 %,V06DE,"Amino acids/carbohydrates/minerals/vitamins, combinations"
 Aa 5%/D15w/Electrolytes,V06DE,"Amino acids/carbohydrates/minerals/vitamins, combinations"
 Abatacept/Maltose,L04AA,Selective immunosuppressants
+Albumin Human,B05AA,Blood substitutes and plasma protein fractions
 Alendronate Sodium/Vitamin D3,M05BB,"Bisphosphonates, combinations"
 Amino Ac 8 %/D14w/Electrolytes,V06DE,"Amino acids/carbohydrates/minerals/vitamins, combinations"
 Amino Acid 8 % In D14w,V06DE,"Amino acids/carbohydrates/minerals/vitamins, combinations"
 Amino Acids 4.25%/Dextrose 10%,V06DE,"Amino acids/carbohydrates/minerals/vitamins, combinations"
 Amino Acids 5 %/Dextrose 15 %,V06DE,"Amino acids/carbohydrates/minerals/vitamins, combinations"
 Amino Acids 5 %/Dextrose 20 %,V06DE,"Amino acids/carbohydrates/minerals/vitamins, combinations"
+Aripiprazole Lauroxil,N05AX,Other antipsychotics
 B Complex W-C No.20/Folic Acid,A11EX,"Vitamin B-complex, other combinations"
 Betamethasone/Propylene Glyc,D07AC,"Corticosteroids, potent (group III)"
 Bictegrav/Emtricit/Tenofov Ala,J05AR,"Antivirals for treatment of HIV infections, combinations"
@@ -19,6 +21,132 @@ Butalbit/Acetamin/Caff/Codeine,N02AJ,Opioids in combination with non-opioid anal
 "C1 Esterase Inhibitor, Recomb",L04AJ,Complement inhibitors
 Cabotegravir/Rilpivirine,J05AR,"Antivirals for treatment of HIV infections, combinations"
 Capsaicin/Skin Cleanser,M02AB,Capsaicin and similar agents
+Carbidopa,N04BA,Dopa and dopa derivatives
 "Cefazolin Sodium/Dextrose,iso",J01DB,First-generation cephalosporins
 Cefepime In Iso-Osm Dextrose,J01DE,Fourth-generation cephalosporins
 "Cefoxitin Sodium/Dextrose,iso",J01DC,Second-generation cephalosporins
+Chlordiazepoxide/Clidinium Br,A03CA,Synthetic anticholinergic agents in combination with psycholeptics
+Cholestyramine/Aspartame,C10AC,Bile acid sequestrants
+Ciprofloxacin Hcl/Dexameth,S01CA,Corticosteroids and antiinfectives in combination
+Clindamycin Phos/Benzoyl Perox,D10AF,Antiinfectives for treatment of acne
+Clotrimazole/Betamethasone Dip,D01AC,Imidazole and triazole derivatives
+Codeine/Butalbital/Asa/Caffein,N02AJ,Opioids in combination with non-opioid analgesics
+Collagenase Clostridium Hist.,D03BA,Proteolytic enzymes
+Copanlisib Di-Hcl,L01EM,Phosphatidylinositol-3-kinase (Pi3K) inhibitors
+Cytomegalovirus Immune Globuln,J06BB,Specific immunoglobulins
+Dapaglifloz Propaned/Metformin,A10BD,Combinations of oral blood glucose lowering drugs
+Dexamethasone Sodium Phosp/Pf,H02AB,Glucocorticoids
+Dextrose 10 % And 0.45 % Nacl,B05BB,Solutions affecting the electrolyte balance
+Dextrose 5 % And 0.9 % Nacl,B05BB,Solutions affecting the electrolyte balance
+Dextrose 5 %-0.2 % Sod Chlorid,B05BB,Solutions affecting the electrolyte balance
+Dextrose 5 %-0.45 % Sod Chlord,B05BB,Solutions affecting the electrolyte balance
+Dextrose 5%-Lactated Ringers,B05BB,Solutions affecting the electrolyte balance
+"Diph,pertus(Acel),tet,polio/Pf",J07CA,"Bacterial and viral vaccines, combined"
+"Diph,pertuss(Acell),tet Ped/Pf",J07AJ,Pertussis vaccines
+"Diph,pertuss(Acell),tet Vac/Pf",J07AJ,Pertussis vaccines
+"Dipht,pert(A),tet-Polio/Hib/Pf",J07AG,Haemophilus influenzae B vaccines
+"Diphth,pertuss(Acell),tet Vac",J07AJ,Pertussis vaccines
+Elexacaftor/Tezacaftor/Ivacaft,R07AX,Other respiratory system products
+Empaglifloz/Linaglip/Metformin,A10BD,Combinations of oral blood glucose lowering drugs
+Emtricitabine/Tenofovir (Tdf),J05AR,"Antivirals for treatment of HIV infections, combinations"
+Epoetin Alfa,B03XA,Other antianemic preparations
+Epoetin Alfa-Epbx,B03XA,Other antianemic preparations
+Fluticasone Propion/Salmeterol,R03AK,"Adrenergics in combination with corticosteroids or other drugs, excl. anticholinergics"
+Fluticasone/Umeclidin/Vilanter,R03AL,Adrenergics in combination with anticholinergics incl. triple combinations with corticosteroids
+Hepatitis A Virus Vaccine/Pf,J07BC,Hepatitis vaccines
+Hepatitis B Vaccine/Cpg1018/Pf,J07BC,Hepatitis vaccines
+Hepatitis B Virus Vaccine/Pf,J07BC,Hepatitis vaccines
+Hpv Vaccine 9-Valent/Pf,J07BM,Papillomavirus vaccines
+Icosapent Ethyl,C10AX,Other lipid modifying agents
+Immun Glob G(Igg)-Hipp/Maltose,J06BA,"Immunoglobulins, normal human"
+Immun Glob G(Igg)-Ifas/Glycine,J06BA,"Immunoglobulins, normal human"
+Immun Glob G(Igg)/Gly/Iga 0-50,J06BA,"Immunoglobulins, normal human"
+Immun Glob G(Igg)/Gly/Iga Ov50,J06BA,"Immunoglobulins, normal human"
+Immun Glob G(Igg)/Pro/Iga 0-50,J06BA,"Immunoglobulins, normal human"
+Immun Glob G/Gly/Gluc/Iga 0-50,J06BA,"Immunoglobulins, normal human"
+Immun Glob G/Sorb/Gly/Iga 0-50,J06BA,"Immunoglobulins, normal human"
+Immun Globg(Igg)/Malt/Iga Ov50,J06BA,"Immunoglobulins, normal human"
+Immune Globul G (Igg)/Glycine,J06BA,"Immunoglobulins, normal human"
+Immune Globul G/Gly/Iga Avg 46,J06BA,"Immunoglobulins, normal human"
+"Immune Globulin,gamma(Igg)klhw",J06BA,"Immunoglobulins, normal human"
+"Immune Globulin,gamma(Igg)slra",J06BA,"Immunoglobulins, normal human"
+Insulin Aspart Prot/Insuln Asp,A10AD,"Insulins and analogues for injection, intermediate- or long-acting combined with fast-acting"
+"Insulin Glargine,hum.Rec.Anlog",A10AE,"Insulins and analogues for injection, long-acting"
+Insulin Lispro Protamin/Lispro,A10AD,"Insulins and analogues for injection, intermediate- or long-acting combined with fast-acting"
+Insulin Nph Hum/Reg Insulin Hm,A10AD,"Insulins and analogues for injection, intermediate- or long-acting combined with fast-acting"
+Insulin Nph Human Isophane,A10AC,"Insulins and analogues for injection, intermediate-acting"
+"Insulin Pen,reusable,bt Lispro",A10AB,"Insulins and analogues for injection, fast-acting"
+"Insulin Pen,reusable,bt,aspart",A10AB,"Insulins and analogues for injection, fast-acting"
+Interferon Beta-1a/Albumin,L03AB,Interferons
+Levalbuterol Hcl,R03AC,Selective beta-2-adrenoreceptor agonists
+Levalbuterol Tartrate,R03AC,Selective beta-2-adrenoreceptor agonists
+Linezolid In 0.9% Sodium Chlor,J01XX,Other antibacterials
+Magnesium Sulfate In Water,B05XA,Electrolyte solutions
+Magnesium Sulfate/D5w,B05XA,Electrolyte solutions
+"Measles,mumps,rubella Vacc/Pf",J07BD,Measles vaccines
+"Mening Vac A,c,y,w-135 Dip/Pf",J07AH,Meningococcal vaccines
+"Mening Vac A,c,y,w135,c-Tet/Pf",J07AH,Meningococcal vaccines
+"Meningococcal B Vaccine,4-Comp",J07AH,Meningococcal vaccines
+Meropenem-0.9% Sodium Chloride,J01DH,Carbapenems
+Multivit 47/Iron/Folate 1/Dha,A11AA,Multivitamins with minerals
+Multivit-Min69/Iron/Folic Acid,A11AA,Multivitamins with minerals
+Multivit-Mins 25/Folic Acid/D3,A11AA,Multivitamins with minerals
+Multivit-Mins60/Iron Fum/Folic,A11AA,Multivitamins with minerals
+Multivit41/Iron/Folate8/Ps-Dha,A11AA,Multivitamins with minerals
+Mv-Mins 71/Iron/Folic No.1/Dha,A11AA,Multivitamins with minerals
+Mvn-Min75/Iron/Iron Ps/Om3/Dha,A11AA,Multivitamins with minerals
+Mycophenolate Mofetil,L04AA,Selective immunosuppressants
+Mycophenolate Mofetil Hcl,L04AA,Selective immunosuppressants
+Mycophenolate Sodium,L04AA,Selective immunosuppressants
+Netarsudil Mesylat/Latanoprost,S01EE,Prostaglandin analogues
+Nirmatrelvir/Ritonavir,J05AE,Protease inhibitors
+Oxycodone Myristate,N02AA,Natural opium alkaloids
+"Pen Needle, Diabetic",V07AY,Other non-therapeutic auxiliary products
+"Piperacillin-Tazo-Dextrose,iso",J01CR,"Combinations of penicillins, incl. beta-lactamase inhibitors"
+Pnv 11/Iron Fum/Folic Acid/Om3,A11AA,Multivitamins with minerals
+Pnv 112/Iron/Folic/Om3/Dha/Epa,A11AA,Multivitamins with minerals
+Pnv 119/Iron Fum/Folic Acid,A11AA,Multivitamins with minerals
+Pnv 67/Iron Ps/Folate No.1/Dha,A11AA,Multivitamins with minerals
+Pnv Cmb 52/Iron/Fa/Omega-3/Dha,A11AA,Multivitamins with minerals
+Pnv No.118/Iron Fumarate/Fa,A11AA,Multivitamins with minerals
+Pnv No.163/Iron/Folate No.10,A11AA,Multivitamins with minerals
+"Pnv,calcium 72/Iron,carb/Folic",A11AA,Multivitamins with minerals
+"Pnv,calcium 72/Iron/Folic Acid",A11AA,Multivitamins with minerals
+"Poliomyelitis Vaccine, Killed",J07BF,Poliomyelitis vaccines
+Potassium Bicarbonate/Cit Ac,B05XA,Electrolyte solutions
+Potassium Chloride In 0.9%nacl,B05XA,Electrolyte solutions
+Potassium Chloride In Lr-D5,B05XA,Electrolyte solutions
+Potassium Chloride In Water,B05XA,Electrolyte solutions
+Potassium Chloride-0.45% Nacl,B05XA,Electrolyte solutions
+Potassium Chloride/D5-0.45nacl,B05XA,Electrolyte solutions
+Potassium Chloride/D5-0.9%nacl,B05XA,Electrolyte solutions
+"Potassium Phos,m-Basic-D-Basic",B05XA,Electrolyte solutions
+Prenatal 118/Iron/Folate 6/Dha,A11AA,Multivitamins with minerals
+Prenatal 147/Iron/Folic Acid,A11AA,Multivitamins with minerals
+Prenatal 25/Iron/Folate 6/Dha,A11AA,Multivitamins with minerals
+Prenatal 48/Iron/Folic Acid/B6,A11AA,Multivitamins with minerals
+Prenatal 93/Iron/Folate 9/Dha,A11AA,Multivitamins with minerals
+Prenatal No.52/Iron/Fa/Dha,A11AA,Multivitamins with minerals
+Prenatal Vit 10/Iron/Folic/Dha,A11AA,Multivitamins with minerals
+Prenatal Vit 85/Iron/Fa 1/Dha,A11AA,Multivitamins with minerals
+Prenatal Vit 87/Iron/Folic/Dha,A11AA,Multivitamins with minerals
+Prenatal Vit No.170/Iron/Folic,A11AA,Multivitamins with minerals
+"Prenatal Vit,calc76/Iron/Folic",A11AA,Multivitamins with minerals
+"Prenatal Vit,calc78/Iron/Folic",A11AA,Multivitamins with minerals
+Prenatal Vit103/Iron Fum/Folic,A11AA,Multivitamins with minerals
+"Prenatal Vit27,calcium/Iron/Fa",A11AA,Multivitamins with minerals
+"Prenatal,calc.40/Iron/Folate 1",A11AA,Multivitamins with minerals
+"Rsv Vacc, Pref A And Pref B/Pf",J07BX,Other viral vaccines
+Rsvpref3 Antigen/As01e/Pf,J07BX,Other viral vaccines
+"Sodium,calcium,mag,pot Oxybate",N07XX,Other nervous system drugs
+"Tetanus, Diphtheria Tox,adult",J07AM,Tetanus vaccines
+"Tetanus,diphtheria Toxd Ped/Pf",J07AM,Tetanus vaccines
+Tetanus-Diphtheria Toxoids/Pf,J07AM,Tetanus vaccines
+Tiotropium Br/Olodaterol Hcl,R03AL,Adrenergics in combination with anticholinergics incl. triple combinations with corticosteroids
+Umeclidinium Brm/Vilanterol Tr,R03AL,Adrenergics in combination with anticholinergics incl. triple combinations with corticosteroids
+Varicella Vaccine Live/Pf,J07BK,Varicella zoster vaccines
+Varicella-Zoster Ge/As01b/Pf,J07BK,Varicella zoster vaccines
+Vit B Comp No.3/Folic/C/Biotin,A11AA,Multivitamins with minerals
+Zoledronic Ac/Mannitol/0.9nacl,M05BA,Bisphosphonates
+Zoledronic Acid/Mannitol-Water,M05BA,Bisphosphonates
+Zoster Vaccine Live/Pf,J07BK,Varicella zoster vaccines
