@@ -113,6 +113,64 @@ SPECIALTY_ALIASES = {
     "Interventional Cardiology": "Cardiology",
     "Medical Oncology": "Hematology-Oncology",
 }
+# Brand-name canonicalization. CMS lists the same drug under multiple brand
+# strings that differ only by injector / pen / pack size / inhaler tech /
+# citrate-free formulation. Collapsing them gives true per-drug spend totals.
+# Excluded on purpose: XR vs IR (different release profile), oral vs LAI
+# (e.g. Abilify vs Abilify Maintena), and dosing-interval LAI variants
+# (Invega Sustenna/Trinza/Hafyera).
+BRAND_ALIASES = {
+    # --- Biologics: pen / sureclick / syringe / pack-size variants ---
+    "Humira Pen": "Humira",
+    "Humira Pen Crohn's-Uc-Hs": "Humira",
+    "Humira Pen Psor-Uveits-Adol Hs": "Humira",
+    "Humira(Cf)": "Humira",
+    "Humira(Cf) Pen": "Humira",
+    "Humira(Cf) Pediatric Crohn's": "Humira",
+    "Humira(Cf) Pen Crohn's-Uc-Hs": "Humira",
+    "Humira(Cf) Pen Psor-Uv-Adol Hs": "Humira",
+    "Enbrel Mini": "Enbrel",
+    "Enbrel Sureclick": "Enbrel",
+    "Dupixent Pen": "Dupixent",
+    "Dupixent Syringe": "Dupixent",
+    "Repatha Sureclick": "Repatha",
+    "Repatha Pushtronex": "Repatha",
+    "Repatha Syringe": "Repatha",
+    "Cosentyx Pen": "Cosentyx",
+    "Cosentyx Pen (2 Pens)": "Cosentyx",
+    "Cosentyx (2 Syringes)": "Cosentyx",
+    "Cosentyx Sensoready Pen": "Cosentyx",
+    "Cosentyx Sensoready (2 Pens)": "Cosentyx",
+    "Cosentyx Syringe": "Cosentyx",
+    "Cosentyx Unoready Pen": "Cosentyx",
+    # --- Insulins: pen / Solostar / Flextouch / Kwikpen / Penfill variants ---
+    "Lantus Solostar": "Lantus",
+    "Toujeo Max Solostar": "Toujeo",
+    "Toujeo Solostar": "Toujeo",
+    "Novolog Flexpen": "Novolog",
+    "Novolog Penfill": "Novolog",
+    "Humalog Junior Kwikpen": "Humalog",
+    "Humalog Kwikpen U-100": "Humalog",
+    "Humalog Kwikpen U-200": "Humalog",
+    "Humalog Tempo Pen U-100": "Humalog",
+    "Tresiba Flextouch U-100": "Tresiba",
+    "Tresiba Flextouch U-200": "Tresiba",
+    "Levemir Flexpen": "Levemir",
+    "Levemir Flextouch": "Levemir",
+    # --- Other delivery / pack variants ---
+    "Restasis Multidose": "Restasis",
+    "Victoza 2-Pak": "Victoza",
+    "Victoza 3-Pak": "Victoza",
+    "Tivicay Pd": "Tivicay",
+    "Ingrezza Initiation Pack": "Ingrezza",
+    # --- Inhaler-tech / HFA variants (same drug, different inhaler) ---
+    "Spiriva Handihaler": "Spiriva",
+    "Spiriva Respimat": "Spiriva",
+    "Advair Hfa": "Advair Diskus",
+    "Albuterol Sulfate Hfa": "Albuterol Sulfate",
+    # --- CMS naming quirk ---
+    "Levothyroxine": "Levothyroxine Sodium",
+}
 STATE_NAMES = {
     "AA": "Armed Forces Americas",
     "AE": "Armed Forces Europe",
@@ -392,6 +450,7 @@ def _normalize_dataset(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df["State"] = _normalize_states(df["State"])
     df["Specialty"] = _normalize_specialties(df["Specialty"])
+    df["Brand Name"] = df["Brand Name"].replace(BRAND_ALIASES)
     normalized = (
         df.groupby(DIMENSION_COLUMNS, dropna=False, as_index=False)[METRIC_COLUMNS]
         .sum()
@@ -597,7 +656,9 @@ def summarize_yearly_spending(df: pd.DataFrame) -> pd.DataFrame:
 
 @st.cache_data(show_spinner="Loading provider data...")
 def load_provider_summary() -> pd.DataFrame:
-    return pd.read_parquet(_resolved_provider_summary_path())
+    df = pd.read_parquet(_resolved_provider_summary_path())
+    df["Brand Name"] = df["Brand Name"].replace(BRAND_ALIASES)
+    return df
 
 
 def summarize_top_providers(
