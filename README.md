@@ -6,7 +6,7 @@ The app has three pages, accessible from a top navigation bar:
 
 - **Med D Drugs Dashboard** — aggregate analysis of pharmacy-dispensed drug costs, claims, and specialty patterns
 - **Med B Drugs Dashboard** — annual Medicare Part B (clinician-administered) drug spending by HCPCS code, brand, and generic
-- **Provider Search** — drill down to individual Part D prescribers by city, radius, or name
+- **Provider Search** — drill down to individual Part D prescribers or Part B rendering providers by city, radius, or name
 
 Data is hosted on Hugging Face and downloaded once per container into a local cache, so cold starts pay a small one-time cost and subsequent reads are local-disk speed.
 
@@ -27,16 +27,19 @@ Data is hosted on Hugging Face and downloaded once per container into a local ca
 - Year filter, optional generic-name filter, and Brand / Generic grouping toggle (defaults to brand)
 - Six metric cards: total spend, total claims, total beneficiaries, average spend per beneficiary, distinct drugs, and first→last-year spend growth
 - Top drugs by spend (Bar / Treemap toggle) with per-section Top N control (5 / 10 / 20)
+- **Top specialties by spend** (Bar / Treemap toggle), built from CMS Physician PUF drug-HCPCS rows
 - Yearly trend chart for selected drugs
 - HCPCS-level drill-down table (one row per HCPCS code × brand × year)
 - Indigo header banner and multi-hue chart palettes that keep the page visually distinct from Part D
 
 ### Provider Search
 
+- **Part D / Part B toggle** at the top of the page; same three search modes work for both
 - City + Drug → top prescribers in matching cities
 - City + Radius (5/10/25/50/100 mi) + Drug → top prescribers within a centroid-distance radius
 - Provider Name → top drugs prescribed by matching providers
 - Hover help explains the centroid-based, all-or-nothing-per-city radius behavior
+- Part B drug input accepts brand (e.g. Keytruda), generic (e.g. pembrolizumab), HCPCS code (e.g. J9271), or HCPCS description; result table shows Brand Name and Generic Name columns. Brand/Generic mapping is joined at query time from `part_b_drug_spending.parquet`.
 
 ## Data Architecture
 
@@ -46,7 +49,9 @@ Source of truth for all production data is the public Hugging Face dataset [`mba
 |---|---|---|
 | `processed/medicare_partd_2021_2023.parquet` | 69 MB | Aggregated rows used by the Dashboard and Ask AI's DuckDB view |
 | `processed/medicare_partd_top_providers_by_drug_2021_2023.parquet` | 14 MB | Top-providers-by-drug summary used by the Dashboard |
-| `prescribers/year=YYYY/State=XX/data_0.parquet` | partitioned ~78M rows | Per-prescriber rows used by Provider Search (city + drug, radius, provider name) |
+| `prescribers/year=YYYY/State=XX/data_0.parquet` | partitioned ~78M rows | Per-prescriber rows used by Provider Search Part D mode |
+| `partb_prescribers/year=YYYY/State=XX/data_0.parquet` | partitioned ~1.5M rows | Per-rendering-provider Part B rows (drug HCPCS only); built from CMS Physician PUF; powers Provider Search Part B mode. Note: "Prescriber NPI/Name" columns are kept for partition-naming parallelism with Part D, but the values are the *rendering* clinician (who administered the drug and billed Medicare), not necessarily the ordering clinician. The UI surfaces these as "Rendering Provider" / "Rendering NPI". |
+| `partb_drug_by_specialty.parquet` | ~50 KB | Year × Specialty × HCPCS rollup for the Med B Drugs Dashboard's Top Specialties chart |
 | `cities.parquet` | 403 KB | (State, City) → (Latitude, Longitude) lookup for radius search; built from GeoNames |
 | `state_population.parquet` | 4.5 KB | Census Bureau Vintage 2023 state populations for per-capita map |
 | `drug_atc.parquet` | 82 KB | Generic Name → WHO ATC Levels 1-4 codes/names; built from NLM RxNav |
@@ -112,7 +117,8 @@ The first page load downloads ~83 MB of dashboard parquets from HF into the loca
 │   ├── build_geocoded_cities.py         # builds cities.parquet from GeoNames
 │   ├── build_state_population.py        # builds state_population.parquet from Census Vintage 2023
 │   ├── build_drug_atc.py                # builds drug_atc.parquet via NLM RxNav + overrides
-│   └── build_part_b_drug_spending.py    # builds part_b_drug_spending.parquet from CMS Part B
+│   ├── build_part_b_drug_spending.py    # builds part_b_drug_spending.parquet from CMS Part B
+│   └── build_partb_prescriber_dataset.py # builds partb_prescribers/ + partb_drug_by_specialty from CMS Physician PUF
 ├── requirements.txt
 └── README.md
 ```
@@ -138,5 +144,6 @@ The Hugging Face artifacts only change when the underlying data changes (annual 
 | `scripts/build_state_population.py` | Annually, when Census releases new population estimates |
 | `scripts/build_drug_atc.py` | After adding new entries to `data/drug_atc_overrides.csv`, or annually for new drug approvals |
 | `scripts/build_part_b_drug_spending.py` | Annually, when CMS releases the new run-year Part B Drug Spending file (around April-May). Update `CMS_URL` in the script to the new run-year URL. |
+| `scripts/build_partb_prescriber_dataset.py` | Annually, when CMS releases new run-year Physician & Other Practitioners (Provider × Service) files. Downloads ~6 GB of CSVs, filters to drug HCPCS, partitions per state-year, and uploads both the partitions and a Year×Specialty×HCPCS rollup. Update `CMS_PUF_URLS` in the script when CMS publishes new files. |
 
 All scripts read `HF_TOKEN` from the environment or `.streamlit/secrets.toml`. The drug-ATC builder caches every RxNav response under `hf_staging/rxnav_cache/`, so iterative re-runs after editing the override CSV are nearly instant.

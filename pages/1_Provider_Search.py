@@ -9,8 +9,8 @@ import streamlit as st
 HF_DATASET_BASE = (
     "https://huggingface.co/datasets/mbateya/medicare_part_d_prescribers/resolve/main"
 )
-HF_BASE = f"{HF_DATASET_BASE}/prescribers"
 CITIES_URL = f"{HF_DATASET_BASE}/cities.parquet"
+PARTB_DRUG_SPEND_URL = f"{HF_DATASET_BASE}/part_b_drug_spending.parquet"
 RADIUS_OPTIONS = [5, 10, 25, 50, 100]
 
 RADIUS_HELP = (
@@ -20,8 +20,8 @@ RADIUS_HELP = (
     "excluded otherwise — cities aren't split along their borders.\n\n"
     "**About these cities**\n\n"
     "City names come from each prescriber's listed practice address in the "
-    "CMS Medicare Part D data. They may not pinpoint exactly where the "
-    "prescriber sees patients, and they are not patient locations."
+    "CMS Medicare Part D / Part B data. They may not pinpoint exactly where "
+    "the prescriber sees patients, and they are not patient locations."
 )
 
 US_STATES = {
@@ -45,46 +45,115 @@ STATE_OPTIONS = sorted(US_STATES.items(), key=lambda kv: kv[1])
 YEAR_OPTIONS = [2023, 2022, 2021]
 TOP_N_OPTIONS = [5, 10, 20]
 
+# Per-part schema config. The two CMS datasets use different column names
+# for drug identity, cost, and volume — everything else (NPI, City, Specialty,
+# partition layout) is shared.
+PART_CONFIG = {
+    "Part D": {
+        "base_url": f"{HF_DATASET_BASE}/prescribers",
+        "drug_filter_cols": ['p."Brand Name"', 'p."Generic Name"'],
+        "drug_select_cols": ['p."Brand Name"', 'p."Generic Name"'],
+        "drug_label": "Drug (brand or generic)",
+        "drug_placeholder": "e.g. Soliris",
+        "cost_col": 'p."Total Drug Cost"',
+        "cost_alias": "Total Drug Cost",
+        "volume_col": 'p."Total Claims"',
+        "volume_alias": "Total Claims",
+        "per_unit_alias": "Cost per 30-Day Fill",
+        "per_unit_expr": 'p."Total Drug Cost" / NULLIF(p."Total 30-Day Fills", 0)',
+        "extra_provider_cols": ['p."Total Beneficiaries"'],
+        "brand_join": "",
+        "provider_alias": "Prescriber Name",   # Part D records WHO PRESCRIBED the pharmacy script
+        "npi_alias": "Prescriber NPI",
+        "provider_term": "prescribers",
+    },
+    "Part B": {
+        "base_url": f"{HF_DATASET_BASE}/partb_prescribers",
+        # Brand & Generic come from a runtime LEFT JOIN against
+        # part_b_drug_spending.parquet (registered as `partb_brand_lookup`
+        # view on the cached DuckDB connection).
+        "drug_filter_cols": [
+            'p."HCPCS Code"', 'p."HCPCS Description"',
+            'b."Brand Name"', 'b."Generic Name"',
+        ],
+        "drug_select_cols": [
+            'p."HCPCS Code"', 'p."HCPCS Description"',
+            'b."Brand Name"', 'b."Generic Name"',
+        ],
+        "drug_label": "Drug (brand, generic, or HCPCS code/description, e.g. Keytruda)",
+        "drug_placeholder": "e.g. Keytruda",
+        "cost_col": 'p."Total Spending"',
+        "cost_alias": "Total Spending",
+        "volume_col": 'p."Total Services"',
+        "volume_alias": "Total Services",
+        "per_unit_alias": "Avg Medicare Payment",
+        "per_unit_expr": 'p."Avg Medicare Payment"',
+        "extra_provider_cols": ['p."Total Beneficiaries"'],
+        "brand_join": 'LEFT JOIN partb_brand_lookup b USING ("HCPCS Code")',
+        # Part B PUF records the RENDERING provider (who administered the drug
+        # and billed Medicare), not necessarily the ordering clinician.
+        "provider_alias": "Rendering Provider",
+        "npi_alias": "Rendering NPI",
+        "provider_term": "rendering providers",
+    },
+}
+
 
 @st.cache_resource(show_spinner="Connecting to dataset…")
 def _get_con() -> duckdb.DuckDBPyConnection:
     con = duckdb.connect()
     con.execute("INSTALL httpfs; LOAD httpfs;")
+    # Persistent HCPCS Code → Brand Name / Generic Name lookup for Part B
+    # provider search. STRING_AGG handles the rare biosimilar case where one
+    # HCPCS maps to multiple brand names.
+    con.execute(
+        f"""
+        CREATE OR REPLACE VIEW partb_brand_lookup AS
+        SELECT
+            "HCPCS Code",
+            STRING_AGG(DISTINCT "Brand Name",   '; ' ORDER BY "Brand Name")   AS "Brand Name",
+            STRING_AGG(DISTINCT "Generic Name", '; ' ORDER BY "Generic Name") AS "Generic Name"
+        FROM read_parquet('{PARTB_DRUG_SPEND_URL}')
+        WHERE "HCPCS Code" IS NOT NULL
+        GROUP BY "HCPCS Code"
+        """
+    )
     return con
 
 
-def _state_url(year: int, state: str) -> str:
-    return f"{HF_BASE}/year={year}/State={state}/data_0.parquet"
+def _state_url(part: str, year: int, state: str) -> str:
+    return f"{PART_CONFIG[part]['base_url']}/year={year}/State={state}/data_0.parquet"
 
 
 @st.cache_data(show_spinner="Querying…", ttl=3600)
-def search_city_drug(year: int, state: str, city: str, drug: str, top_n: int) -> pd.DataFrame:
+def search_city_drug(
+    part: str, year: int, state: str, city: str, drug: str, top_n: int
+) -> pd.DataFrame:
+    cfg = PART_CONFIG[part]
     con = _get_con()
-    url = _state_url(year, state)
+    url = _state_url(part, year, state)
+    drug_select = ", ".join(cfg["drug_select_cols"])
+    drug_filter = " OR ".join(f"{c} ILIKE ?" for c in cfg["drug_filter_cols"])
+    drug_filter_params = [f"%{drug}%"] * len(cfg["drug_filter_cols"])
     return con.execute(
         f"""
         SELECT
-            "Prescriber Name",
-            "Prescriber NPI",
-            City,
-            Specialty,
-            "Brand Name",
-            "Generic Name",
-            "Total Claims",
-            "Total Drug Cost",
-            "Cost per 30-Day Fill",
-        FROM (
-            SELECT
-                *,
-                "Total Drug Cost" / NULLIF("Total 30-Day Fills", 0) AS "Cost per 30-Day Fill"
-            FROM read_parquet('{url}')
-            WHERE City ILIKE ?
-              AND ("Brand Name" ILIKE ? OR "Generic Name" ILIKE ?)
-        )
-        ORDER BY "Total Drug Cost" DESC
+            p."Prescriber Name" AS "{cfg["provider_alias"]}",
+            p."Prescriber NPI"  AS "{cfg["npi_alias"]}",
+            p.City,
+            p.Specialty,
+            {drug_select},
+            {cfg["volume_col"]} AS "{cfg["volume_alias"]}",
+            {cfg["cost_col"]} AS "{cfg["cost_alias"]}",
+            {cfg["per_unit_expr"]} AS "{cfg["per_unit_alias"]}"
+        FROM read_parquet('{url}') p
+        {cfg["brand_join"]}
+        WHERE p.City ILIKE ?
+          AND ({drug_filter})
+        ORDER BY {cfg["cost_col"]} DESC
         LIMIT ?
         """,
-        [f"%{city}%", f"%{drug}%", f"%{drug}%", top_n],
+        [f"%{city}%", *drug_filter_params, top_n],
     ).fetchdf()
 
 
@@ -98,8 +167,9 @@ def load_cities() -> pd.DataFrame:
 
 @st.cache_data(show_spinner="Querying…", ttl=3600)
 def search_radius(
-    year: int, state: str, center_city: str, radius_mi: int, drug: str, top_n: int
+    part: str, year: int, state: str, center_city: str, radius_mi: int, drug: str, top_n: int
 ) -> pd.DataFrame:
+    cfg = PART_CONFIG[part]
     cities = load_cities()
     match = cities[(cities["State"] == state) & (cities["City"] == center_city)]
     if match.empty:
@@ -109,7 +179,10 @@ def search_radius(
     lng_delta = radius_mi / max(1e-3, 69.0 * math.cos(math.radians(lat)))
 
     con = _get_con()
-    url = _state_url(year, state)
+    url = _state_url(part, year, state)
+    drug_select = ", ".join(cfg["drug_select_cols"])
+    drug_filter = " OR ".join(f"{c} ILIKE ?" for c in cfg["drug_filter_cols"])
+    drug_filter_params = [f"%{drug}%"] * len(cfg["drug_filter_cols"])
     return con.execute(
         f"""
         WITH nearby AS (
@@ -126,20 +199,20 @@ def search_radius(
               AND Longitude BETWEEN ? AND ?
         )
         SELECT
-            p."Prescriber Name",
-            p."Prescriber NPI",
+            p."Prescriber Name" AS "{cfg["provider_alias"]}",
+            p."Prescriber NPI"  AS "{cfg["npi_alias"]}",
             p.City,
             ROUND(n.distance_mi, 1) AS "Distance (mi)",
             p.Specialty,
-            p."Brand Name",
-            p."Generic Name",
-            p."Total Claims",
-            p."Total Drug Cost"
+            {drug_select},
+            {cfg["volume_col"]} AS "{cfg["volume_alias"]}",
+            {cfg["cost_col"]} AS "{cfg["cost_alias"]}"
         FROM read_parquet('{url}') p
+        {cfg["brand_join"]}
         JOIN nearby n USING (City)
         WHERE n.distance_mi <= ?
-          AND (p."Brand Name" ILIKE ? OR p."Generic Name" ILIKE ?)
-        ORDER BY p."Total Drug Cost" DESC
+          AND ({drug_filter})
+        ORDER BY {cfg["cost_col"]} DESC
         LIMIT ?
         """,
         [
@@ -148,30 +221,33 @@ def search_radius(
             lat - lat_delta, lat + lat_delta,
             lng - lng_delta, lng + lng_delta,
             radius_mi,
-            f"%{drug}%", f"%{drug}%",
+            *drug_filter_params,
             top_n,
         ],
     ).fetchdf()
 
 
 @st.cache_data(show_spinner="Querying…", ttl=3600)
-def search_provider_drugs(year: int, state: str, name: str, top_n: int) -> pd.DataFrame:
+def search_provider_drugs(part: str, year: int, state: str, name: str, top_n: int) -> pd.DataFrame:
+    cfg = PART_CONFIG[part]
     con = _get_con()
-    url = _state_url(year, state)
+    url = _state_url(part, year, state)
+    drug_select = ", ".join(cfg["drug_select_cols"])
+    extra = ", ".join(cfg["extra_provider_cols"])
     return con.execute(
         f"""
         SELECT
-            "Prescriber Name",
-            City,
-            Specialty,
-            "Brand Name",
-            "Generic Name",
-            "Total Claims",
-            "Total Drug Cost",
-            "Total Beneficiaries"
-        FROM read_parquet('{url}')
-        WHERE "Prescriber Name" ILIKE ?
-        ORDER BY "Total Drug Cost" DESC
+            p."Prescriber Name" AS "{cfg["provider_alias"]}",
+            p.City,
+            p.Specialty,
+            {drug_select},
+            {cfg["volume_col"]} AS "{cfg["volume_alias"]}",
+            {cfg["cost_col"]} AS "{cfg["cost_alias"]}",
+            {extra}
+        FROM read_parquet('{url}') p
+        {cfg["brand_join"]}
+        WHERE p."Prescriber Name" ILIKE ?
+        ORDER BY {cfg["cost_col"]} DESC
         LIMIT ?
         """,
         [f"%{name}%", top_n],
@@ -179,12 +255,16 @@ def search_provider_drugs(year: int, state: str, name: str, top_n: int) -> pd.Da
 
 
 def _format_currency(df: pd.DataFrame) -> pd.io.formats.style.Styler:
-    money_cols = [c for c in ("Total Drug Cost", "Cost per 30-Day Fill") if c in df.columns]
+    money_cols = [
+        c for c in (
+            "Total Drug Cost", "Total Spending",
+            "Cost per 30-Day Fill", "Avg Medicare Payment",
+        ) if c in df.columns
+    ]
     fmt = {c: "${:,.2f}" for c in money_cols}
-    if "Total Claims" in df.columns:
-        fmt["Total Claims"] = "{:,.0f}"
-    if "Total Beneficiaries" in df.columns:
-        fmt["Total Beneficiaries"] = "{:,.0f}"
+    for int_col in ("Total Claims", "Total Services", "Total Beneficiaries"):
+        if int_col in df.columns:
+            fmt[int_col] = "{:,.0f}"
     if "Distance (mi)" in df.columns:
         fmt["Distance (mi)"] = "{:.1f}"
     return df.style.format(fmt)
@@ -192,8 +272,23 @@ def _format_currency(df: pd.DataFrame) -> pd.io.formats.style.Styler:
 
 st.title("Provider Search")
 st.caption(
-    "Search Medicare Part D prescribers by city + drug or by provider name. "
-    "Data: 2021–2023 CMS Medicare Part D Prescribers, ~78M rows hosted on Hugging Face."
+    "Search Medicare Part D pharmacy **prescribers** or Part B **rendering providers** "
+    "(clinicians who administered the drug and billed Medicare for it) by city + drug "
+    "or by provider name. Data hosted on Hugging Face."
+)
+
+part = st.radio(
+    "Medicare Part",
+    ["Part D", "Part B"],
+    horizontal=True,
+    help=(
+        "**Part D** = pharmacy-dispensed drugs; data records the **prescriber** "
+        "(MD who wrote the script). ~78M prescriber rows.\n\n"
+        "**Part B** = clinician-administered drugs (infusions, injectables); data "
+        "records the **rendering provider** (who administered the drug and billed "
+        "Medicare). The rendering provider is usually but not always the ordering "
+        "clinician. Search by drug brand, generic, or HCPCS."
+    ),
 )
 
 mode = st.radio(
@@ -221,23 +316,25 @@ with control_cols[2]:
 
 st.divider()
 
+cfg = PART_CONFIG[part]
+
 if mode == "City + Drug → Top Prescribers":
     q_cols = st.columns(2)
     with q_cols[0]:
         city = st.text_input("City", placeholder="e.g. Ann Arbor")
     with q_cols[1]:
-        drug = st.text_input("Drug (brand or generic)", placeholder="e.g. Soliris")
+        drug = st.text_input(cfg["drug_label"], placeholder=cfg["drug_placeholder"])
 
     if city and drug:
         try:
-            df = search_city_drug(year, state, city.strip(), drug.strip(), top_n)
+            df = search_city_drug(part, year, state, city.strip(), drug.strip(), top_n)
         except Exception as exc:
             st.error(f"Query failed: {exc}")
             st.stop()
         if df.empty:
-            st.info(f"No prescribers of '{drug}' found in cities matching '{city}' in {US_STATES[state]} {year}.")
+            st.info(f"No {part} {cfg['provider_term']} of '{drug}' found in cities matching '{city}' in {US_STATES[state]} {year}.")
         else:
-            st.success(f"Top {len(df)} prescribers of {drug} in cities matching '{city}', {US_STATES[state]} {year}")
+            st.success(f"Top {len(df)} {part} {cfg['provider_term']} of {drug} in cities matching '{city}', {US_STATES[state]} {year}")
             st.dataframe(_format_currency(df), use_container_width=True, hide_index=True)
     else:
         st.info("Enter a city and a drug name to search.")
@@ -260,7 +357,7 @@ elif mode == "City + Radius + Drug → Top Prescribers Within Radius":
     with q_cols[1]:
         radius_mi = st.selectbox("Radius (mi)", RADIUS_OPTIONS, index=2, help=RADIUS_HELP)
     with q_cols[2]:
-        drug = st.text_input("Drug (brand or generic)", placeholder="e.g. Soliris", key="radius_drug")
+        drug = st.text_input(cfg["drug_label"], placeholder=cfg["drug_placeholder"], key="radius_drug")
 
     st.caption(
         "Same-state radius search. Cities outside the chosen state are not included; "
@@ -269,17 +366,17 @@ elif mode == "City + Radius + Drug → Top Prescribers Within Radius":
 
     if center_city and drug:
         try:
-            df = search_radius(year, state, center_city, radius_mi, drug.strip(), top_n)
+            df = search_radius(part, year, state, center_city, radius_mi, drug.strip(), top_n)
         except Exception as exc:
             st.error(f"Query failed: {exc}")
             st.stop()
         if df.empty:
             st.info(
-                f"No prescribers of '{drug}' within {radius_mi} mi of {center_city}, {US_STATES[state]} ({year})."
+                f"No {part} {cfg['provider_term']} of '{drug}' within {radius_mi} mi of {center_city}, {US_STATES[state]} ({year})."
             )
         else:
             st.success(
-                f"Top {len(df)} prescribers of {drug} within {radius_mi} mi of {center_city}, {US_STATES[state]} ({year})"
+                f"Top {len(df)} {part} {cfg['provider_term']} of {drug} within {radius_mi} mi of {center_city}, {US_STATES[state]} ({year})"
             )
             st.dataframe(_format_currency(df), use_container_width=True, hide_index=True)
     else:
@@ -289,16 +386,16 @@ else:
     name = st.text_input("Provider name", placeholder="e.g. Smith")
     if name:
         try:
-            df = search_provider_drugs(year, state, name.strip(), top_n)
+            df = search_provider_drugs(part, year, state, name.strip(), top_n)
         except Exception as exc:
             st.error(f"Query failed: {exc}")
             st.stop()
         if df.empty:
-            st.info(f"No providers matching '{name}' found in {US_STATES[state]} {year}.")
+            st.info(f"No {part} providers matching '{name}' found in {US_STATES[state]} {year}.")
         else:
-            providers = df["Prescriber Name"].nunique()
+            providers = df[cfg["provider_alias"]].nunique()
             label = (
-                f"Top {len(df)} drugs by spend for '{name}' in {US_STATES[state]} {year}"
+                f"Top {len(df)} {part} drugs by spend for '{name}' in {US_STATES[state]} {year}"
                 if providers == 1
                 else f"Top {len(df)} (provider, drug) pairs matching '{name}' in {US_STATES[state]} {year}"
             )

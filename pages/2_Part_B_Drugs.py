@@ -7,6 +7,7 @@ from huggingface_hub import hf_hub_download
 
 HF_DATASET_ID = "mbateya/medicare_part_d_prescribers"
 HF_PART_B_FILE = "part_b_drug_spending.parquet"
+HF_PARTB_SPECIALTY_FILE = "partb_drug_by_specialty.parquet"
 
 # Multi-hue palettes for high inter-category contrast.
 # Header/section accents stay purple; data marks use distinct hues for readability.
@@ -36,6 +37,17 @@ def load_part_b() -> pd.DataFrame:
     return df
 
 
+@st.cache_data(show_spinner="Loading Part B specialty rollup…", ttl=86400)
+def load_partb_specialty() -> pd.DataFrame:
+    """Year × Specialty × HCPCS rollup built from the CMS Physician PUF (drug HCPCS only)."""
+    path = hf_hub_download(
+        repo_id=HF_DATASET_ID,
+        filename=HF_PARTB_SPECIALTY_FILE,
+        repo_type="dataset",
+    )
+    return pd.read_parquet(path)
+
+
 def _fmt_num(value: float, unit: float) -> str:
     return f"{value / unit:.1f}".rstrip("0").rstrip(".")
 
@@ -58,6 +70,25 @@ def _fmt_count(value: float) -> str:
     if value >= 1e3:
         return f"{_fmt_num(value, 1e3)}K"
     return f"{value:,.0f}"
+
+
+def _currency_axis_ticks(max_val: float) -> tuple[list[float], list[str]]:
+    """Return (tickvals, ticktext) for a currency axis using $XB / $XM abbreviations."""
+    import math
+    if max_val <= 0:
+        return [0], ["$0"]
+    raw_step = max_val / 5
+    magnitude = 10 ** math.floor(math.log10(raw_step))
+    for m in (1, 2, 5):
+        if m * magnitude >= raw_step:
+            step = m * magnitude
+            break
+    else:
+        step = 10 * magnitude
+    n_ticks = int(max_val / step) + 2
+    tickvals = [i * step for i in range(n_ticks)]
+    ticktext = [_fmt_cost(v) if v > 0 else "$0" for v in tickvals]
+    return tickvals, ticktext
 
 
 def section_heading(text: str) -> None:
@@ -274,6 +305,7 @@ if chart_type == "Bar":
     top_with_year["Year"] = top_with_year["Year"].astype(str)
     ordered_years = sorted(top_with_year["Year"].unique())
     color_map = {y: PALETTE_YEARS[i % len(PALETTE_YEARS)] for i, y in enumerate(ordered_years)}
+    top_with_year["_text"] = top_with_year["Total Spending"].apply(_fmt_cost)
     fig = px.bar(
         top_with_year,
         x="Total Spending",
@@ -284,11 +316,21 @@ if chart_type == "Bar":
         template="plotly_white",
         color_discrete_map=color_map,
         barmode="group",
+        custom_data=["_text"],
+    )
+    drug_tickvals, drug_ticktext = _currency_axis_ticks(top_with_year["Total Spending"].max())
+    fig.update_traces(
+        hovertemplate="<b>%{y}</b><br>%{customdata[0]}<extra>%{fullData.name}</extra>",
     )
     fig.update_layout(
         height=max(380, 38 * len(top_names)),
         yaxis=dict(autorange="reversed"),
-        xaxis_title="Total Spending (USD)",
+        xaxis=dict(
+            title="Total Spending",
+            tickmode="array",
+            tickvals=drug_tickvals,
+            ticktext=drug_ticktext,
+        ),
         margin=dict(t=20, l=10, r=10, b=10),
     )
 else:
@@ -299,20 +341,143 @@ else:
             [treemap_df, pd.DataFrame([{drug_col: f"Others ({n_drugs - len(top_names)} more)", "Total Spending": others}])],
             ignore_index=True,
         )
+    treemap_df["_text"] = treemap_df["Total Spending"].apply(_fmt_cost)
     fig = px.treemap(
         treemap_df,
         path=[drug_col],
         values="Total Spending",
         color=drug_col,
         color_discrete_sequence=PALETTE_DRUGS + ["#cccccc"],
+        custom_data=["_text"],
     )
     fig.update_traces(
-        texttemplate="<b>%{label}</b><br>%{value:$,.0f}",
-        hovertemplate="<b>%{label}</b><br>Total Spending: %{value:$,.0f}<extra></extra>",
+        texttemplate="<b>%{label}</b><br>%{customdata[0]}",
+        hovertemplate="<b>%{label}</b><br>Total Spending: %{customdata[0]}<extra></extra>",
     )
     fig.update_layout(margin=dict(t=20, l=10, r=10, b=10), height=520)
 
 chart_card(fig)
+
+st.divider()
+
+section_heading("Annual top specialties")
+try:
+    spec_df_full = load_partb_specialty()
+except Exception as exc:  # noqa: BLE001 — file may not yet exist on HF
+    st.info(
+        "Specialty rollup not yet available on Hugging Face. "
+        "Run `python scripts/build_partb_prescriber_dataset.py` to generate it."
+    )
+    spec_df_full = None
+
+if spec_df_full is not None and not spec_df_full.empty:
+    spec_filtered = spec_df_full[spec_df_full["Year"].isin(selected_years)].copy()
+
+if spec_df_full is not None and not spec_df_full.empty and not spec_filtered.empty:
+    spec_ctrl_cols = st.columns([3, 1])
+    with spec_ctrl_cols[0]:
+        spec_top_n = render_top_n_control(
+            "Show specialties appearing in each year's top:",
+            "ptb_spec_top_n",
+        )
+    with spec_ctrl_cols[1]:
+        spec_chart_type = st.segmented_control(
+            "Chart type",
+            options=["Bar", "Treemap"],
+            default="Treemap",
+            key="ptb_spec_chart_type",
+        )
+
+    spec_totals = (
+        spec_filtered.groupby("Specialty", as_index=False)["Total Spending"].sum()
+        .sort_values("Total Spending", ascending=False)
+        .head(spec_top_n)
+    )
+    spec_top_names = spec_totals["Specialty"].tolist()
+    n_specs = spec_filtered["Specialty"].nunique()
+
+    st.caption(
+        f"A specialty is included if it ranks in the top {spec_top_n} for any selected year. "
+        "Source: CMS Physician PUF (drug HCPCS rows only). Specialty here is the "
+        "**rendering** clinician's specialty — i.e., who administered the drug and billed "
+        "Medicare — not the ordering clinician. So this view shows where Part B drugs "
+        "are physically given (Ophthalmology offices, infusion suites, etc.) rather than "
+        "who prescribed them. Totals also do not include facility-billed administrations "
+        "(hospital outpatient), so they are lower than the Med B Drug Spending totals above."
+    )
+
+    if spec_chart_type == "Bar":
+        spec_with_year = (
+            spec_filtered[spec_filtered["Specialty"].isin(spec_top_names)]
+            .groupby(["Year", "Specialty"], as_index=False)["Total Spending"].sum()
+        )
+        spec_with_year["Year"] = spec_with_year["Year"].astype(str)
+        spec_ordered_years = sorted(spec_with_year["Year"].unique())
+        spec_color_map = {
+            y: PALETTE_YEARS[i % len(PALETTE_YEARS)]
+            for i, y in enumerate(spec_ordered_years)
+        }
+        spec_with_year["_text"] = spec_with_year["Total Spending"].apply(_fmt_cost)
+        spec_fig = px.bar(
+            spec_with_year,
+            x="Total Spending",
+            y="Specialty",
+            color="Year",
+            category_orders={"Specialty": spec_top_names, "Year": spec_ordered_years},
+            orientation="h",
+            template="plotly_white",
+            color_discrete_map=spec_color_map,
+            barmode="group",
+            custom_data=["_text"],
+        )
+        spec_tickvals, spec_ticktext = _currency_axis_ticks(spec_with_year["Total Spending"].max())
+        spec_fig.update_traces(
+            hovertemplate="<b>%{y}</b><br>%{customdata[0]}<extra>%{fullData.name}</extra>",
+        )
+        spec_fig.update_layout(
+            height=max(380, 38 * len(spec_top_names)),
+            yaxis=dict(autorange="reversed"),
+            xaxis=dict(
+                title="Total Spending",
+                tickmode="array",
+                tickvals=spec_tickvals,
+                ticktext=spec_ticktext,
+            ),
+            margin=dict(t=20, l=10, r=10, b=10),
+        )
+    else:
+        spec_treemap_df = spec_totals.copy()
+        spec_others = (
+            spec_filtered[~spec_filtered["Specialty"].isin(spec_top_names)]
+            ["Total Spending"].sum()
+        )
+        if spec_others > 0:
+            spec_treemap_df = pd.concat(
+                [
+                    spec_treemap_df,
+                    pd.DataFrame([{
+                        "Specialty": f"Others ({n_specs - len(spec_top_names)} more)",
+                        "Total Spending": spec_others,
+                    }]),
+                ],
+                ignore_index=True,
+            )
+        spec_treemap_df["_text"] = spec_treemap_df["Total Spending"].apply(_fmt_cost)
+        spec_fig = px.treemap(
+            spec_treemap_df,
+            path=["Specialty"],
+            values="Total Spending",
+            color="Specialty",
+            color_discrete_sequence=PALETTE_DRUGS + ["#cccccc"],
+            custom_data=["_text"],
+        )
+        spec_fig.update_traces(
+            texttemplate="<b>%{label}</b><br>%{customdata[0]}",
+            hovertemplate="<b>%{label}</b><br>Total Spending: %{customdata[0]}<extra></extra>",
+        )
+        spec_fig.update_layout(margin=dict(t=20, l=10, r=10, b=10), height=520)
+
+    chart_card(spec_fig)
 
 st.divider()
 
@@ -329,6 +494,7 @@ if trend_picks:
         filtered[filtered[drug_col].isin(trend_picks)]
         .groupby(["Year", drug_col], as_index=False)["Total Spending"].sum()
     )
+    trend_df["_text"] = trend_df["Total Spending"].apply(_fmt_cost)
     trend_fig = px.line(
         trend_df.sort_values([drug_col, "Year"]),
         x="Year",
@@ -337,10 +503,20 @@ if trend_picks:
         markers=True,
         template="plotly_white",
         color_discrete_sequence=PALETTE_DRUGS,
+        custom_data=["_text"],
+    )
+    trend_tickvals, trend_ticktext = _currency_axis_ticks(trend_df["Total Spending"].max())
+    trend_fig.update_traces(
+        hovertemplate="<b>%{fullData.name}</b><br>%{x}: %{customdata[0]}<extra></extra>",
     )
     trend_fig.update_layout(
         xaxis=dict(dtick=1),
-        yaxis_title="Total Spending (USD)",
+        yaxis=dict(
+            title="Total Spending",
+            tickmode="array",
+            tickvals=trend_tickvals,
+            ticktext=trend_ticktext,
+        ),
         margin=dict(t=20, l=10, r=10, b=10),
         height=420,
     )
