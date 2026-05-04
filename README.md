@@ -5,7 +5,7 @@ Interactive Streamlit app for exploring Medicare Part D prescribing patterns acr
 The app has three pages, accessible from a top navigation bar:
 
 - **Part D Dashboard** — aggregate analysis of pharmacy-dispensed drug costs, claims, and specialty patterns
-- **Part B Drugs** — annual Medicare Part B (clinician-administered) drug spending by HCPCS code, brand, and generic
+- **Med B Drugs Dashboard** — annual Medicare Part B (clinician-administered) drug spending by HCPCS code, brand, and generic
 - **Provider Search** — drill down to individual Part D prescribers by city, radius, or name
 
 Data is hosted on Hugging Face and downloaded once per container into a local cache, so cold starts pay a small one-time cost and subsequent reads are local-disk speed.
@@ -22,13 +22,14 @@ Data is hosted on Hugging Face and downloaded once per container into a local ca
 - US state choropleth with a **Total Cost / Per Capita Cost** toggle (Census Bureau Vintage 2023 population estimates)
 - **Ask AI** chatbot (Claude Haiku 4.5) that writes DuckDB SQL against the dataset and explains results in plain English
 
-### Part B Drugs
+### Med B Drugs Dashboard
 
-- Year filter and optional generic-name filter
-- KPI strip: total Part B drug spend, total claims, total beneficiaries, distinct drugs
-- Top N drugs by spend (Bar / Treemap toggle, with distinct purple palette so it doesn't blur with Part D)
+- Year filter, optional generic-name filter, and Brand / Generic grouping toggle (defaults to brand)
+- Six metric cards: total spend, total claims, total beneficiaries, average spend per beneficiary, distinct drugs, and first→last-year spend growth
+- Top drugs by spend (Bar / Treemap toggle) with per-section Top N control (5 / 10 / 20)
 - Yearly trend chart for selected drugs
 - HCPCS-level drill-down table (one row per HCPCS code × brand × year)
+- Indigo header banner and multi-hue chart palettes that keep the page visually distinct from Part D
 
 ### Provider Search
 
@@ -101,7 +102,7 @@ The first page load downloads ~83 MB of dashboard parquets from HF into the loca
 ├── build_provider_summary.py       # offline ETL: top-providers-by-drug rollup
 ├── pages/
 │   ├── 1_Provider_Search.py        # Provider Search page
-│   └── 2_Part_B_Drugs.py           # Part B drug spending page
+│   └── 2_Part_B_Drugs.py           # Med B Drugs Dashboard page
 ├── data/
 │   ├── drug_atc_overrides.csv      # tracked manual ATC overrides
 │   └── processed/                  # gitignored local parquet cache (optional)
