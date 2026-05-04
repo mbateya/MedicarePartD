@@ -19,7 +19,7 @@ provider_search = st.Page(
 )
 part_b_drugs = st.Page(
     "pages/2_Part_B_Drugs.py",
-    title="Part B Drugs",
+    title="Med B Drugs Dashboard",
     icon=":material/medication:",
 )
 
