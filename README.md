@@ -4,7 +4,7 @@ Interactive Streamlit app for exploring Medicare Part D prescribing patterns acr
 
 The app has three pages, accessible from a top navigation bar:
 
-- **Part D Dashboard** — aggregate analysis of pharmacy-dispensed drug costs, claims, and specialty patterns
+- **Med D Drugs Dashboard** — aggregate analysis of pharmacy-dispensed drug costs, claims, and specialty patterns
 - **Med B Drugs Dashboard** — annual Medicare Part B (clinician-administered) drug spending by HCPCS code, brand, and generic
 - **Provider Search** — drill down to individual Part D prescribers by city, radius, or name
 
@@ -12,7 +12,7 @@ Data is hosted on Hugging Face and downloaded once per container into a local ca
 
 ## Features
 
-### Dashboard
+### Med D Drugs Dashboard
 
 - Global filters for year, state, specialty, brand name, and generic name
 - Total drug cost and total claims summary cards
@@ -98,7 +98,7 @@ The first page load downloads ~83 MB of dashboard parquets from HF into the loca
 ```text
 .
 ├── app.py                          # Streamlit entry point; declares pages + nav
-├── Med_D_dashboard.py              # Dashboard page
+├── Med_D_dashboard.py              # Med D Drugs Dashboard page
 ├── build_provider_summary.py       # offline ETL: top-providers-by-drug rollup
 ├── pages/
 │   ├── 1_Provider_Search.py        # Provider Search page

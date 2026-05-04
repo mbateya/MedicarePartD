@@ -1557,7 +1557,7 @@ def main() -> None:
       CMS Public Data
     </div>
     <div style="font-size:26px;font-weight:600;color:#f0f4ff;line-height:1.2;">
-      Medicare Part D Prescribing
+      Med D Drugs Dashboard
     </div>
     <div style="font-size:13px;color:#7a90b8;margin-top:5px;">
       Interactive analysis of drug costs, claims, and specialty patterns &middot; 2021&ndash;2023

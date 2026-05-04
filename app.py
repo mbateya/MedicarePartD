@@ -8,7 +8,7 @@ st.set_page_config(
 
 dashboard = st.Page(
     "Med_D_dashboard.py",
-    title="Part D Dashboard",
+    title="Med D Drugs Dashboard",
     icon=":material/insights:",
     default=True,
 )
