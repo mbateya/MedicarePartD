@@ -960,6 +960,7 @@ def render_treemap(
     top_n: int,
     title: str,
     palette: list[str] | None = None,
+    show_others: bool = True,
 ):
     totals = (
         df.groupby(name_col, dropna=False)["Total Drug Cost"]
@@ -973,7 +974,7 @@ def render_treemap(
     colors = [palette[i % len(palette)] for i in range(len(top))]
     top_abbrev = [fmt_currency(v) for v in top["Total Drug Cost"]]
 
-    if others_cost > 0:
+    if show_others and others_cost > 0:
         others_count = len(totals) - top_n
         others_label = f"Others ({others_count} more)"
         named_total = top["Total Drug Cost"].sum()
@@ -1033,8 +1034,76 @@ def render_treemap(
         )
 
     fig = style_fig(fig, title=title)
-    fig.update_layout(showlegend=False, margin=dict(t=60, r=10, b=10, l=10))
+    # Collapse top margin when no title — style_fig's margin gets clobbered
+    # otherwise. Explicit height keeps the figure from over-stretching when
+    # rendered in a narrow Streamlit column.
+    fig.update_layout(
+        showlegend=False,
+        margin=dict(t=60 if title else 16, r=10, b=10, l=10),
+        height=520,
+    )
     return fig
+
+
+def compute_others_stats(
+    df: pd.DataFrame,
+    name_col: str,
+    top_n: int,
+    value_col: str = "Total Drug Cost",
+) -> dict:
+    """Aggregate 'Others' tail (everything past top N) for sidebar display."""
+    totals = (
+        df.groupby(name_col, dropna=False)[value_col]
+        .sum()
+        .sort_values(ascending=False)
+    )
+    grand_total = totals.sum()
+    if len(totals) <= top_n or grand_total <= 0:
+        return {"count": 0, "value": 0.0, "pct": 0.0}
+    others = totals.iloc[top_n:]
+    return {
+        "count": len(others),
+        "value": float(others.sum()),
+        "pct": float(others.sum() / grand_total * 100),
+    }
+
+
+def render_others_card(
+    stats: dict,
+    top_n: int,
+    label_singular: str = "drug",
+    accent: str = "#888",
+) -> None:
+    """Compact sidebar card summarising the 'Others' tail next to a treemap."""
+    if stats["count"] == 0:
+        return
+    label = label_singular if stats["count"] == 1 else f"{label_singular}s"
+    st.markdown(
+        f"""
+<div style="
+    background:white;
+    border:0.5px solid #e8e8e8;
+    border-left:3px solid {accent};
+    border-radius:10px;
+    padding:18px 16px;
+    margin:0 0 12px 0;
+">
+  <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:#888;margin-bottom:10px;">
+    Beyond top {top_n}
+  </div>
+  <div style="font-size:22px;font-weight:600;color:#111;line-height:1.1;margin-bottom:4px;">
+    {fmt_currency(stats['value'])}
+  </div>
+  <div style="font-size:13px;color:#444;margin-bottom:12px;">
+    across {stats['count']:,} more {label}
+  </div>
+  <div style="font-size:13px;color:#888;">
+    {stats['pct']:.0f}% of all spend
+  </div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
 
 
 def render_state_choropleth(
@@ -1765,7 +1834,7 @@ def main() -> None:
         grouping=grouping,
         context=context,
     )
-    st.caption(context)
+    st.caption(f"Grouped by **{grouping.lower()}** &middot; {context}")
     st.caption(
         f"A drug is included if it ranks in the top {top_drug_n} for any selected year. "
         "The chart then shows that drug's full trend across all selected years."
@@ -1794,7 +1863,25 @@ def main() -> None:
                     f"<strong>{growth_val:+.0f}%</strong>."
                 )
     if drug_chart_type == "Treemap":
-        drug_fig = render_treemap(filtered_df, drug_col, top_drug_n, drug_title)
+        # No figure title — section_heading above already labels this section,
+        # and dropping the title collapses style_fig's t=60 margin to t=20 so
+        # the treemap tiles sit near the top of the chart_card. That makes
+        # the chart's content top align naturally with the Others card eyebrow.
+        drug_fig = render_treemap(
+            filtered_df, drug_col, top_drug_n, title="", show_others=False,
+        )
+        drug_others = compute_others_stats(filtered_df, drug_col, top_drug_n)
+        if drug_others["count"] > 0:
+            chart_layout_cols = st.columns([4, 1], vertical_alignment="top")
+            with chart_layout_cols[0]:
+                chart_card(drug_fig)
+            with chart_layout_cols[1]:
+                render_others_card(
+                    drug_others, top_drug_n,
+                    label_singular="drug", accent="#378add",
+                )
+        else:
+            chart_card(drug_fig)
     else:
         drug_fig = render_charts(
             top_drugs,
@@ -1804,7 +1891,7 @@ def main() -> None:
             title=drug_title,
             orientation="h",
         )
-    chart_card(drug_fig)
+        chart_card(drug_fig)
     st.markdown(DATAFRAME_CSS, unsafe_allow_html=True)
     st.dataframe(
         format_tables(
