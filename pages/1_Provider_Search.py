@@ -13,6 +13,17 @@ CITIES_URL = f"{HF_DATASET_BASE}/cities.parquet"
 PARTB_DRUG_SPEND_URL = f"{HF_DATASET_BASE}/part_b_drug_spending.parquet"
 RADIUS_OPTIONS = [5, 10, 25, 50, 100]
 
+# Med B Provider Search drug-class groupings. Brand-name substrings are
+# matched ILIKE against the aggregated Brand Name in `partb_brand_lookup`.
+# Searching the group name (e.g. "IVIG") expands the filter to any HCPCS
+# whose brand contains one of the listed substrings.
+DRUG_GROUPS_PARTB = {
+    "IVIG": [
+        "Octagam", "Alyglo", "Privigen", "Gammagard", "Gammaked",
+        "Bivigam", "Gammaplex", "Carimune", "Panzyga", "Asceniv",
+    ],
+}
+
 RADIUS_HELP = (
     "**How the radius works**\n\n"
     "Distance is measured between the center points of cities. A city is "
@@ -74,7 +85,7 @@ PART_CONFIG = {
         # view on the cached DuckDB connection).
         "drug_filter_cols": [
             'p."HCPCS Code"', 'p."HCPCS Description"',
-            'b."Brand Name"', 'b."Generic Name"',
+            'b."Brand Name"', 'b."Generic Name"', 'b."Drug Group"',
         ],
         "drug_select_cols": [
             'p."HCPCS Code"', 'p."HCPCS Description"',
@@ -99,23 +110,41 @@ PART_CONFIG = {
 }
 
 
+def _build_drug_group_case() -> str:
+    """SQL CASE expression mapping aggregated Brand Name → drug class group."""
+    if not DRUG_GROUPS_PARTB:
+        return "CAST(NULL AS VARCHAR)"
+    parts = []
+    for group, brands in DRUG_GROUPS_PARTB.items():
+        conds = " OR ".join(f"\"Brand Name\" ILIKE '%{b}%'" for b in brands)
+        parts.append(f"WHEN {conds} THEN '{group}'")
+    return "CASE " + " ".join(parts) + " END"
+
+
 @st.cache_resource(show_spinner="Connecting to dataset…")
 def _get_con() -> duckdb.DuckDBPyConnection:
     con = duckdb.connect()
     con.execute("INSTALL httpfs; LOAD httpfs;")
-    # Persistent HCPCS Code → Brand Name / Generic Name lookup for Part B
-    # provider search. STRING_AGG handles the rare biosimilar case where one
-    # HCPCS maps to multiple brand names.
+    # Persistent HCPCS Code → Brand Name / Generic Name / Drug Group lookup
+    # for Part B provider search. STRING_AGG handles the rare biosimilar case
+    # where one HCPCS maps to multiple brand names. The Drug Group column
+    # tags class-level groupings (e.g. IVIG) so users can search by class.
     con.execute(
         f"""
         CREATE OR REPLACE VIEW partb_brand_lookup AS
+        WITH agg AS (
+            SELECT
+                "HCPCS Code",
+                STRING_AGG(DISTINCT "Brand Name",   '; ' ORDER BY "Brand Name")   AS "Brand Name",
+                STRING_AGG(DISTINCT "Generic Name", '; ' ORDER BY "Generic Name") AS "Generic Name"
+            FROM read_parquet('{PARTB_DRUG_SPEND_URL}')
+            WHERE "HCPCS Code" IS NOT NULL
+            GROUP BY "HCPCS Code"
+        )
         SELECT
-            "HCPCS Code",
-            STRING_AGG(DISTINCT "Brand Name",   '; ' ORDER BY "Brand Name")   AS "Brand Name",
-            STRING_AGG(DISTINCT "Generic Name", '; ' ORDER BY "Generic Name") AS "Generic Name"
-        FROM read_parquet('{PARTB_DRUG_SPEND_URL}')
-        WHERE "HCPCS Code" IS NOT NULL
-        GROUP BY "HCPCS Code"
+            "HCPCS Code", "Brand Name", "Generic Name",
+            {_build_drug_group_case()} AS "Drug Group"
+        FROM agg
         """
     )
     return con
@@ -123,38 +152,6 @@ def _get_con() -> duckdb.DuckDBPyConnection:
 
 def _state_url(part: str, year: int, state: str) -> str:
     return f"{PART_CONFIG[part]['base_url']}/year={year}/State={state}/data_0.parquet"
-
-
-@st.cache_data(show_spinner="Querying…", ttl=3600)
-def search_city_drug(
-    part: str, year: int, state: str, city: str, drug: str, top_n: int
-) -> pd.DataFrame:
-    cfg = PART_CONFIG[part]
-    con = _get_con()
-    url = _state_url(part, year, state)
-    drug_select = ", ".join(cfg["drug_select_cols"])
-    drug_filter = " OR ".join(f"{c} ILIKE ?" for c in cfg["drug_filter_cols"])
-    drug_filter_params = [f"%{drug}%"] * len(cfg["drug_filter_cols"])
-    return con.execute(
-        f"""
-        SELECT
-            p."Prescriber Name" AS "{cfg["provider_alias"]}",
-            p."Prescriber NPI"  AS "{cfg["npi_alias"]}",
-            p.City,
-            p.Specialty,
-            {drug_select},
-            {cfg["volume_col"]} AS "{cfg["volume_alias"]}",
-            {cfg["cost_col"]} AS "{cfg["cost_alias"]}",
-            {cfg["per_unit_expr"]} AS "{cfg["per_unit_alias"]}"
-        FROM read_parquet('{url}') p
-        {cfg["brand_join"]}
-        WHERE p.City ILIKE ?
-          AND ({drug_filter})
-        ORDER BY {cfg["cost_col"]} DESC
-        LIMIT ?
-        """,
-        [f"%{city}%", *drug_filter_params, top_n],
-    ).fetchdf()
 
 
 @st.cache_data(show_spinner="Loading cities…", ttl=86400)
@@ -294,7 +291,6 @@ part = st.radio(
 mode = st.radio(
     "Search mode",
     [
-        "City + Drug → Top Prescribers",
         "City + Radius + Drug → Top Prescribers Within Radius",
         "Provider Name → Top Drugs",
     ],
@@ -318,28 +314,7 @@ st.divider()
 
 cfg = PART_CONFIG[part]
 
-if mode == "City + Drug → Top Prescribers":
-    q_cols = st.columns(2)
-    with q_cols[0]:
-        city = st.text_input("City", placeholder="e.g. Ann Arbor")
-    with q_cols[1]:
-        drug = st.text_input(cfg["drug_label"], placeholder=cfg["drug_placeholder"])
-
-    if city and drug:
-        try:
-            df = search_city_drug(part, year, state, city.strip(), drug.strip(), top_n)
-        except Exception as exc:
-            st.error(f"Query failed: {exc}")
-            st.stop()
-        if df.empty:
-            st.info(f"No {part} {cfg['provider_term']} of '{drug}' found in cities matching '{city}' in {US_STATES[state]} {year}.")
-        else:
-            st.success(f"Top {len(df)} {part} {cfg['provider_term']} of {drug} in cities matching '{city}', {US_STATES[state]} {year}")
-            st.dataframe(_format_currency(df), use_container_width=True, hide_index=True)
-    else:
-        st.info("Enter a city and a drug name to search.")
-
-elif mode == "City + Radius + Drug → Top Prescribers Within Radius":
+if mode == "City + Radius + Drug → Top Prescribers Within Radius":
     cities = load_cities()
     state_cities = sorted(cities[cities["State"] == state]["City"].unique().tolist())
     if not state_cities:
