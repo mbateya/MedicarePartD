@@ -72,6 +72,70 @@ def _fmt_count(value: float) -> str:
     return f"{value:,.0f}"
 
 
+def compute_others_stats(
+    df: pd.DataFrame,
+    name_col: str,
+    top_n: int,
+    value_col: str = "Total Spending",
+) -> dict:
+    """Aggregate the 'Others' tail beyond top N for sidebar display."""
+    totals = (
+        df.groupby(name_col, dropna=False)[value_col]
+        .sum()
+        .sort_values(ascending=False)
+    )
+    grand_total = totals.sum()
+    if len(totals) <= top_n or grand_total <= 0:
+        return {"count": 0, "value": 0.0, "pct": 0.0}
+    others = totals.iloc[top_n:]
+    return {
+        "count": len(others),
+        "value": float(others.sum()),
+        "pct": float(others.sum() / grand_total * 100),
+    }
+
+
+def render_others_card(
+    stats: dict,
+    top_n: int,
+    label_singular: str = "drug",
+    label_plural: str | None = None,
+    accent: str = "#888",
+) -> None:
+    """Compact sidebar card summarising the 'Others' tail next to a treemap."""
+    if stats["count"] == 0:
+        return
+    if label_plural is None:
+        label_plural = f"{label_singular}s"
+    label = label_singular if stats["count"] == 1 else label_plural
+    st.markdown(
+        f"""
+<div style="
+    background:white;
+    border:0.5px solid #e8e8e8;
+    border-left:3px solid {accent};
+    border-radius:10px;
+    padding:18px 16px;
+    margin:0 0 12px 0;
+">
+  <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:#888;margin-bottom:10px;">
+    Beyond top {top_n}
+  </div>
+  <div style="font-size:22px;font-weight:600;color:#111;line-height:1.1;margin-bottom:4px;">
+    {_fmt_cost(stats['value'])}
+  </div>
+  <div style="font-size:13px;color:#444;margin-bottom:12px;">
+    across {stats['count']:,} more {label}
+  </div>
+  <div style="font-size:13px;color:#888;">
+    {stats['pct']:.0f}% of all spend
+  </div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+
 def _currency_axis_ticks(max_val: float) -> tuple[list[float], list[str]]:
     """Return (tickvals, ticktext) for a currency axis using $XB / $XM abbreviations."""
     import math
@@ -333,30 +397,34 @@ if chart_type == "Bar":
         ),
         margin=dict(t=20, l=10, r=10, b=10),
     )
+    chart_card(fig)
 else:
     treemap_df = top_drugs.copy()
-    others = filtered[~filtered[drug_col].isin(top_names)]["Total Spending"].sum()
-    if others > 0:
-        treemap_df = pd.concat(
-            [treemap_df, pd.DataFrame([{drug_col: f"Others ({n_drugs - len(top_names)} more)", "Total Spending": others}])],
-            ignore_index=True,
-        )
     treemap_df["_text"] = treemap_df["Total Spending"].apply(_fmt_cost)
     fig = px.treemap(
         treemap_df,
         path=[drug_col],
         values="Total Spending",
         color=drug_col,
-        color_discrete_sequence=PALETTE_DRUGS + ["#cccccc"],
+        color_discrete_sequence=PALETTE_DRUGS,
         custom_data=["_text"],
     )
     fig.update_traces(
         texttemplate="<b>%{label}</b><br>%{customdata[0]}",
         hovertemplate="<b>%{label}</b><br>Total Spending: %{customdata[0]}<extra></extra>",
     )
-    fig.update_layout(margin=dict(t=20, l=10, r=10, b=10), height=520)
-
-chart_card(fig)
+    fig.update_layout(margin=dict(t=16, l=10, r=10, b=10), height=520)
+    drug_others = compute_others_stats(filtered, drug_col, top_n)
+    if drug_others["count"] > 0:
+        drug_layout_cols = st.columns([4, 1], vertical_alignment="top")
+        with drug_layout_cols[0]:
+            chart_card(fig)
+        with drug_layout_cols[1]:
+            render_others_card(
+                drug_others, top_n, label_singular="drug", accent="#5a2ea8",
+            )
+    else:
+        chart_card(fig)
 
 st.divider()
 
@@ -445,39 +513,37 @@ if spec_df_full is not None and not spec_df_full.empty and not spec_filtered.emp
             ),
             margin=dict(t=20, l=10, r=10, b=10),
         )
+        chart_card(spec_fig)
     else:
         spec_treemap_df = spec_totals.copy()
-        spec_others = (
-            spec_filtered[~spec_filtered["Specialty"].isin(spec_top_names)]
-            ["Total Spending"].sum()
-        )
-        if spec_others > 0:
-            spec_treemap_df = pd.concat(
-                [
-                    spec_treemap_df,
-                    pd.DataFrame([{
-                        "Specialty": f"Others ({n_specs - len(spec_top_names)} more)",
-                        "Total Spending": spec_others,
-                    }]),
-                ],
-                ignore_index=True,
-            )
         spec_treemap_df["_text"] = spec_treemap_df["Total Spending"].apply(_fmt_cost)
         spec_fig = px.treemap(
             spec_treemap_df,
             path=["Specialty"],
             values="Total Spending",
             color="Specialty",
-            color_discrete_sequence=PALETTE_DRUGS + ["#cccccc"],
+            color_discrete_sequence=PALETTE_DRUGS,
             custom_data=["_text"],
         )
         spec_fig.update_traces(
             texttemplate="<b>%{label}</b><br>%{customdata[0]}",
             hovertemplate="<b>%{label}</b><br>Total Spending: %{customdata[0]}<extra></extra>",
         )
-        spec_fig.update_layout(margin=dict(t=20, l=10, r=10, b=10), height=520)
-
-    chart_card(spec_fig)
+        spec_fig.update_layout(margin=dict(t=16, l=10, r=10, b=10), height=520)
+        spec_others_stats = compute_others_stats(spec_filtered, "Specialty", spec_top_n)
+        if spec_others_stats["count"] > 0:
+            spec_layout_cols = st.columns([4, 1], vertical_alignment="top")
+            with spec_layout_cols[0]:
+                chart_card(spec_fig)
+            with spec_layout_cols[1]:
+                render_others_card(
+                    spec_others_stats, spec_top_n,
+                    label_singular="specialty",
+                    label_plural="specialties",
+                    accent="#1d9e75",
+                )
+        else:
+            chart_card(spec_fig)
 
 st.divider()
 

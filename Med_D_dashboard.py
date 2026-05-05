@@ -1072,12 +1072,15 @@ def render_others_card(
     stats: dict,
     top_n: int,
     label_singular: str = "drug",
+    label_plural: str | None = None,
     accent: str = "#888",
 ) -> None:
     """Compact sidebar card summarising the 'Others' tail next to a treemap."""
     if stats["count"] == 0:
         return
-    label = label_singular if stats["count"] == 1 else f"{label_singular}s"
+    if label_plural is None:
+        label_plural = f"{label_singular}s"
+    label = label_singular if stats["count"] == 1 else label_plural
     st.markdown(
         f"""
 <div style="
@@ -1927,9 +1930,6 @@ def main() -> None:
     ta_section_df = _attach_atc_level_2(filtered_df)
     top_therapeutic_classes = summarize_top_therapeutic_classes(filtered_df, top_ta_n)
     ta_context = _filter_context(selected_years, selected_states, selected_specialties)
-    ta_title = _section_title(
-        "Top therapeutic classes (ATC Level 2) by total cost", context=ta_context
-    )
     st.caption(ta_context)
     st.caption(
         f"A therapeutic class is included if it ranks in the top {top_ta_n} for any "
@@ -1950,10 +1950,27 @@ def main() -> None:
         )
     if ta_chart_type == "Treemap":
         ta_fig = render_treemap(
-            ta_section_df, "Therapeutic Class", top_ta_n, ta_title,
-            palette=THERAPEUTIC_TREEMAP_PALETTE,
+            ta_section_df, "Therapeutic Class", top_ta_n, title="",
+            palette=THERAPEUTIC_TREEMAP_PALETTE, show_others=False,
         )
+        ta_others = compute_others_stats(ta_section_df, "Therapeutic Class", top_ta_n)
+        if ta_others["count"] > 0:
+            ta_layout_cols = st.columns([4, 1], vertical_alignment="top")
+            with ta_layout_cols[0]:
+                chart_card(ta_fig)
+            with ta_layout_cols[1]:
+                render_others_card(
+                    ta_others, top_ta_n,
+                    label_singular="therapeutic class",
+                    label_plural="therapeutic classes",
+                    accent="#118a7e",
+                )
+        else:
+            chart_card(ta_fig)
     else:
+        ta_title = _section_title(
+            "Top therapeutic classes (ATC Level 2) by total cost", context=ta_context
+        )
         ta_fig = render_charts(
             top_therapeutic_classes,
             x="Total Drug Cost",
@@ -1963,7 +1980,7 @@ def main() -> None:
             orientation="h",
             year_palette=THERAPEUTIC_YEAR_PALETTE,
         )
-    chart_card(ta_fig)
+        chart_card(ta_fig)
     st.dataframe(
         format_tables(
             top_therapeutic_classes[
@@ -1997,7 +2014,6 @@ def main() -> None:
         )
     top_specialties = summarize_top_specialties(specialty_section_df, top_specialty_n)
     specialty_context = _filter_context(selected_years, selected_states, [])
-    specialty_title = _section_title("Top specialties by total cost", context=specialty_context)
     st.caption(specialty_context)
     st.caption(
         f"A specialty is included if it ranks in the top {top_specialty_n} for any "
@@ -2018,10 +2034,25 @@ def main() -> None:
         )
     if specialty_chart_type == "Treemap":
         specialty_fig = render_treemap(
-            specialty_section_df, "Specialty", top_specialty_n, specialty_title,
-            palette=SPECIALTY_TREEMAP_PALETTE,
+            specialty_section_df, "Specialty", top_specialty_n, title="",
+            palette=SPECIALTY_TREEMAP_PALETTE, show_others=False,
         )
+        spec_others = compute_others_stats(specialty_section_df, "Specialty", top_specialty_n)
+        if spec_others["count"] > 0:
+            spec_layout_cols = st.columns([4, 1], vertical_alignment="top")
+            with spec_layout_cols[0]:
+                chart_card(specialty_fig)
+            with spec_layout_cols[1]:
+                render_others_card(
+                    spec_others, top_specialty_n,
+                    label_singular="specialty",
+                    label_plural="specialties",
+                    accent="#c0392b",
+                )
+        else:
+            chart_card(specialty_fig)
     else:
+        specialty_title = _section_title("Top specialties by total cost", context=specialty_context)
         specialty_fig = render_charts(
             top_specialties,
             x="Total Drug Cost",
@@ -2031,7 +2062,7 @@ def main() -> None:
             orientation="h",
             year_palette=SPECIALTY_YEAR_PALETTE,
         )
-    chart_card(specialty_fig)
+        chart_card(specialty_fig)
     st.dataframe(
         format_tables(
             top_specialties[
