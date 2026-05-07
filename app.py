@@ -22,6 +22,14 @@ part_b_drugs = st.Page(
     title="Med B Drugs Dashboard",
     icon=":material/medication:",
 )
+part_b_drugs_state = st.Page(
+    "pages/3_Med_B_Drugs_State.py",
+    title="Med B Drugs by State & Provider Specialty",
+    icon=":material/map:",
+)
 
-nav = st.navigation([dashboard, part_b_drugs, provider_search], position="top")
+nav = st.navigation(
+    [dashboard, part_b_drugs, part_b_drugs_state, provider_search],
+    position="top",
+)
 nav.run()

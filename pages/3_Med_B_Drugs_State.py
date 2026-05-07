@@ -1,3 +1,13 @@
+"""Med B Drugs by State & Provider Specialty dashboard.
+
+Sources Year × State × HCPCS aggregations of the CMS Physician PUF
+(`partb_drug_by_state.parquet` + `partb_drug_by_state_specialty.parquet`).
+
+Caveat: physician-administered Part B only. Hospital outpatient / facility
+billed administrations are not in the source. Beneficiary counts are sums
+across providers and overcount patients seen by multiple providers.
+"""
+
 from __future__ import annotations
 
 import pandas as pd
@@ -6,43 +16,38 @@ import streamlit as st
 from huggingface_hub import hf_hub_download
 
 HF_DATASET_ID = "mbateya/medicare_part_d_prescribers"
-HF_PART_B_FILE = "part_b_drug_spending.parquet"
-HF_PARTB_SPECIALTY_FILE = "partb_drug_by_specialty.parquet"
+HF_DRUG_BY_STATE_FILE = "partb_drug_by_state.parquet"
+HF_DRUG_BY_STATE_SPECIALTY_FILE = "partb_drug_by_state_specialty.parquet"
 
-# Multi-hue palettes for high inter-category contrast.
-# Header/section accents stay purple; data marks use distinct hues for readability.
+# Same palette family as the national Med B page.
 PALETTE_YEARS = ["#5a2ea8", "#1d9e75", "#ef9f27", "#185fa5", "#d85a30"]
 PALETTE_DRUGS = [
     "#5a2ea8", "#1d9e75", "#ef9f27", "#185fa5", "#d85a30",
     "#c0392b", "#16a085", "#9b6dde", "#3aae8e", "#f5c178",
     "#0c447c", "#a44a3f",
 ]
-HEADER_BG = "#1c2a5e"      # deep indigo — distinct from Part D's #0a1628
+HEADER_BG = "#1c2a5e"
 HEADER_EYEBROW = "#9b8fd9"
 HEADER_SUBTITLE = "#a8b3d9"
 HEADER_TITLE = "#f0eefa"
 ACCENT = "#7a3fd1"
 
 
-@st.cache_data(show_spinner="Loading Part B drug spending…", ttl=86400)
-def load_part_b() -> pd.DataFrame:
+@st.cache_data(show_spinner="Loading Part B by-state rollup…", ttl=86400)
+def load_drug_by_state() -> pd.DataFrame:
     path = hf_hub_download(
         repo_id=HF_DATASET_ID,
-        filename=HF_PART_B_FILE,
+        filename=HF_DRUG_BY_STATE_FILE,
         repo_type="dataset",
     )
-    df = pd.read_parquet(path)
-    # CMS appends '*' to some brand names as a footnote marker; strip for clean display
-    df["Brand Name"] = df["Brand Name"].astype(str).str.rstrip("*").str.strip()
-    return df
+    return pd.read_parquet(path)
 
 
-@st.cache_data(show_spinner="Loading Part B specialty rollup…", ttl=86400)
-def load_partb_specialty() -> pd.DataFrame:
-    """Year × Specialty × HCPCS rollup built from the CMS Physician PUF (drug HCPCS only)."""
+@st.cache_data(show_spinner="Loading Part B by-state specialty rollup…", ttl=86400)
+def load_drug_by_state_specialty() -> pd.DataFrame:
     path = hf_hub_download(
         repo_id=HF_DATASET_ID,
-        filename=HF_PARTB_SPECIALTY_FILE,
+        filename=HF_DRUG_BY_STATE_SPECIALTY_FILE,
         repo_type="dataset",
     )
     return pd.read_parquet(path)
@@ -78,7 +83,6 @@ def compute_others_stats(
     top_n: int,
     value_col: str = "Total Spending",
 ) -> dict:
-    """Aggregate the 'Others' tail beyond top N for sidebar display."""
     totals = (
         df.groupby(name_col, dropna=False)[value_col]
         .sum()
@@ -102,7 +106,6 @@ def render_others_card(
     label_plural: str | None = None,
     accent: str = "#888",
 ) -> None:
-    """Compact sidebar card summarising the 'Others' tail next to a treemap."""
     if stats["count"] == 0:
         return
     if label_plural is None:
@@ -137,7 +140,6 @@ def render_others_card(
 
 
 def _currency_axis_ticks(max_val: float) -> tuple[list[float], list[str]]:
-    """Return (tickvals, ticktext) for a currency axis using $XB / $XM abbreviations."""
     import math
     if max_val <= 0:
         return [0], ["$0"]
@@ -221,7 +223,7 @@ def render_year_control(year_options: list[int], key: str) -> list[int]:
 
 def render_metric_cards(filtered: pd.DataFrame, drug_col: str) -> None:
     total_spend = filtered["Total Spending"].sum()
-    total_claims = filtered["Total Claims"].sum()
+    total_services = filtered["Total Services"].sum()
     n_drugs = filtered[drug_col].nunique()
     drug_label = "By brand" if drug_col == "Brand Name" else "By generic name"
 
@@ -244,14 +246,14 @@ def render_metric_cards(filtered: pd.DataFrame, drug_col: str) -> None:
     <div style="position:absolute;top:0;left:0;width:3px;height:100%;background:#7a3fd1;border-radius:10px 0 0 10px;"></div>
     <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:#888;margin-bottom:5px;">Total Part B spend</div>
     <div style="font-size:21px;font-weight:600;color:#111;line-height:1;">{_fmt_cost(total_spend)}</div>
-    <div style="font-size:11px;color:#1d9e75;margin-top:4px;">Selected period</div>
+    <div style="font-size:11px;color:#888;margin-top:4px;">Physician-administered</div>
   </div>
 
   <div style="background:white;border:0.5px solid #e8e8e8;border-radius:8px;padding:10px 12px;position:relative;overflow:hidden;min-height:82px;">
     <div style="position:absolute;top:0;left:0;width:3px;height:100%;background:#9b6dde;border-radius:10px 0 0 10px;"></div>
-    <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:#888;margin-bottom:5px;">Total claims</div>
-    <div style="font-size:21px;font-weight:600;color:#111;line-height:1;">{_fmt_count(total_claims)}</div>
-    <div style="font-size:11px;color:#888;margin-top:4px;">Selected period</div>
+    <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:#888;margin-bottom:5px;">Total services</div>
+    <div style="font-size:21px;font-weight:600;color:#111;line-height:1;">{_fmt_count(total_services)}</div>
+    <div style="font-size:11px;color:#888;margin-top:4px;">Billed service units</div>
   </div>
 
   <div style="background:white;border:0.5px solid #e8e8e8;border-radius:8px;padding:10px 12px;position:relative;overflow:hidden;min-height:82px;">
@@ -277,10 +279,8 @@ def render_metric_cards(filtered: pd.DataFrame, drug_col: str) -> None:
 def summarize_yearly_spending(df: pd.DataFrame) -> pd.DataFrame:
     agg_cols = {
         "Total Spending": "sum",
-        "Total Claims": "sum",
+        "Total Services": "sum",
     }
-    if "Total Dosage Units" in df.columns:
-        agg_cols["Total Dosage Units"] = "sum"
     return (
         df.groupby("Year", as_index=False)
         .agg(agg_cols)
@@ -292,29 +292,24 @@ def summarize_yearly_spending(df: pd.DataFrame) -> pd.DataFrame:
 def render_yearly_spending_chart(df: pd.DataFrame):
     chart_df = df.copy()
     chart_df["_spend"] = chart_df["Total Spending"].apply(_fmt_cost)
-    chart_df["_claims"] = chart_df["Total Claims"].apply(_fmt_count)
-    custom_cols = ["_spend", "_claims"]
-    hover_lines = "<br>Total Claims: %{customdata[1]}"
-    if "Total Dosage Units" in chart_df.columns:
-        chart_df["_units"] = chart_df["Total Dosage Units"].apply(_fmt_count)
-        custom_cols.append("_units")
-        hover_lines += "<br>Total Dosage Units: %{customdata[2]}"
+    chart_df["_services"] = chart_df["Total Services"].apply(_fmt_count)
 
     fig = px.area(
         chart_df,
         x="Year",
         y="Total Spending",
         template="plotly_white",
-        custom_data=custom_cols,
+        custom_data=["_spend", "_services"],
     )
     fig.update_traces(
         mode="lines+markers",
         line=dict(color=ACCENT, width=3),
         marker=dict(size=9, color=ACCENT),
         fillcolor="rgba(155, 109, 222, 0.22)",
-        hovertemplate="<b>%{x}</b><br>Total Spending: %{customdata[0]}"
-        + hover_lines
-        + "<extra></extra>",
+        hovertemplate=(
+            "<b>%{x}</b><br>Total Spending: %{customdata[0]}"
+            "<br>Total Services: %{customdata[1]}<extra></extra>"
+        ),
     )
 
     y_min = float(chart_df["Total Spending"].min())
@@ -358,8 +353,9 @@ def render_yearly_spending_chart(df: pd.DataFrame):
     return fig
 
 
-df_full = load_part_b()
+df_full = load_drug_by_state()
 years_available = sorted(df_full["Year"].dropna().unique().astype(int).tolist())
+states_available = sorted(df_full["State"].dropna().unique().tolist())
 
 st.markdown(
     f"""
@@ -374,13 +370,13 @@ st.markdown(
 ">
   <div>
     <div style="font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:{HEADER_EYEBROW};margin-bottom:6px;">
-      CMS Public Data
+      CMS Physician PUF
     </div>
     <div style="font-size:26px;font-weight:600;color:{HEADER_TITLE};line-height:1.2;">
-      Med B Drugs Dashboard
+      Med B Drugs by State &amp; Provider Specialty
     </div>
     <div style="font-size:13px;color:{HEADER_SUBTITLE};margin-top:5px;">
-      Clinician-administered drugs (infusions, injectables) billed by HCPCS code &middot; 2019&ndash;2023
+      Physician-administered Part B drugs by rendering state &middot; 2021&ndash;2023
     </div>
   </div>
 </div>
@@ -388,17 +384,39 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-st.caption(
-    "Annual Medicare Part B drug spending from CMS public data (one row per "
-    "drug per year). Part B covers drugs administered by clinicians "
-    "(infusions, injectables in office/clinic) — distinct from the Part D "
-    "pharmacy-dispensed drugs on the Dashboard tab."
+st.markdown(
+    """
+<div style="
+    background:#fff7e6;
+    border-left:3px solid #ef9f27;
+    border-radius:0 8px 8px 0;
+    padding:10px 14px;
+    font-size:13px;
+    color:#7a4f00;
+    margin:8px 0 14px;
+    line-height:1.6;
+">
+<strong>Scope:</strong> sourced from the CMS Physician &amp; Other Practitioners by Provider and
+Service file, drug HCPCS rows only. Spend totals exclude facility-billed
+administrations (hospital outpatient, infusion centers billing under different
+mechanisms), so they run lower than the official Part B Drug Spending totals
+on the Med B Drugs Dashboard tab. <strong>Total Beneficiaries</strong> is a sum across
+rendering providers and overcounts patients who saw multiple providers.
+</div>
+""",
+    unsafe_allow_html=True,
 )
 
-filter_cols = st.columns([1.6, 1.3])
+filter_cols = st.columns([1.6, 2.2, 1.2])
 with filter_cols[0]:
-    selected_years = render_year_control(years_available, "ptb_year")
+    selected_years = render_year_control(years_available, "ptbs_year")
 with filter_cols[1]:
+    selected_states = st.multiselect(
+        "States (optional filter)",
+        states_available,
+        placeholder="Select one or more states…",
+    )
+with filter_cols[2]:
     grouping = st.radio(
         "Drug grouping",
         ["Brand name", "Generic name"],
@@ -413,6 +431,16 @@ if not selected_years:
     st.stop()
 
 filtered = df_full[df_full["Year"].isin(selected_years)].copy()
+if selected_states:
+    filtered = filtered[filtered["State"].isin(selected_states)]
+
+if filtered.empty:
+    st.warning("No rows match the current filters.")
+    st.stop()
+
+state_label = (
+    f"{', '.join(selected_states)}" if selected_states else "all states"
+)
 
 render_metric_cards(filtered, drug_col)
 
@@ -420,7 +448,10 @@ st.divider()
 
 section_heading("Total yearly spending")
 yearly_spending = summarize_yearly_spending(filtered)
-st.caption("Total Part B drug spending by year for the current filters.")
+st.caption(
+    "Total physician-administered Part B drug spending by year for the current "
+    f"filters. Filtered to **{state_label}**."
+)
 if not yearly_spending.empty:
     if len(yearly_spending) >= 2:
         first_row = yearly_spending.iloc[0]
@@ -430,15 +461,16 @@ if not yearly_spending.empty:
         if first_spend:
             growth_pct = (last_spend - first_spend) / first_spend * 100
             insight_strip(
-                f"<strong>Total spending trend:</strong> Part B drug spending changed by "
-                f"<strong>{growth_pct:+.1f}%</strong> from {int(first_row['Year'])} "
-                f"to {int(last_row['Year'])}."
+                f"<strong>Total spending trend:</strong> Physician-administered "
+                f"Part B drug spending changed by <strong>{growth_pct:+.1f}%</strong> "
+                f"from {int(first_row['Year'])} to {int(last_row['Year'])}."
             )
     else:
         only_row = yearly_spending.iloc[0]
         insight_strip(
             f"<strong>Total spending in {int(only_row['Year'])}:</strong> The current filters "
-            f"include <strong>{_fmt_cost(only_row['Total Spending'])}</strong> in Part B drug spending."
+            f"include <strong>{_fmt_cost(only_row['Total Spending'])}</strong> in "
+            f"physician-administered Part B drug spending."
         )
     chart_card(render_yearly_spending_chart(yearly_spending))
 
@@ -449,32 +481,34 @@ drug_ctrl_cols = st.columns([3, 1])
 with drug_ctrl_cols[0]:
     top_n = render_top_n_control(
         "Show drugs appearing in each year's top:",
-        "ptb_top_n",
+        "ptbs_top_n",
     )
 with drug_ctrl_cols[1]:
     chart_type = st.segmented_control(
         "Chart type",
         options=["Bar", "Treemap"],
         default="Treemap",
-        key="ptb_chart_type",
+        key="ptbs_chart_type",
     )
 
+# Drop rows where the chosen drug column is NaN (~3% of state rollup)
+ranked = filtered[filtered[drug_col].notna()].copy()
 top_drugs = (
-    filtered.groupby(drug_col, as_index=False)["Total Spending"].sum()
+    ranked.groupby(drug_col, as_index=False)["Total Spending"].sum()
     .sort_values("Total Spending", ascending=False)
     .head(top_n)
 )
 top_names = top_drugs[drug_col].tolist()
-n_drugs = filtered[drug_col].nunique()
+n_drugs = ranked[drug_col].nunique()
 
 st.caption(
     f"A drug is included if it ranks in the top {top_n} for any selected year. "
-    "The chart then shows that drug's full trend across all selected years."
+    f"Filtered to **{state_label}**."
 )
 
 if chart_type == "Bar":
     top_with_year = (
-        filtered[filtered[drug_col].isin(top_names)]
+        ranked[ranked[drug_col].isin(top_names)]
         .groupby(["Year", drug_col], as_index=False)["Total Spending"].sum()
     )
     top_with_year["Year"] = top_with_year["Year"].astype(str)
@@ -525,7 +559,7 @@ else:
         hovertemplate="<b>%{label}</b><br>Total Spending: %{customdata[0]}<extra></extra>",
     )
     fig.update_layout(margin=dict(t=16, l=10, r=10, b=10), height=520)
-    drug_others = compute_others_stats(filtered, drug_col, top_n)
+    drug_others = compute_others_stats(ranked, drug_col, top_n)
     if drug_others["count"] > 0:
         drug_layout_cols = st.columns([4, 1], vertical_alignment="top")
         with drug_layout_cols[0]:
@@ -541,120 +575,118 @@ st.divider()
 
 section_heading("Annual top specialties")
 try:
-    spec_df_full = load_partb_specialty()
-except Exception as exc:  # noqa: BLE001 — file may not yet exist on HF
+    spec_df_full = load_drug_by_state_specialty()
+except Exception:  # noqa: BLE001 — file may not yet exist on HF
     st.info(
-        "Specialty rollup not yet available on Hugging Face. "
-        "Run `python scripts/build_partb_prescriber_dataset.py` to generate it."
+        "State-aware specialty rollup not yet available on Hugging Face. "
+        "Run `python scripts/build_partb_prescriber_dataset.py --rollup-only` to generate it."
     )
     spec_df_full = None
 
 if spec_df_full is not None and not spec_df_full.empty:
     spec_filtered = spec_df_full[spec_df_full["Year"].isin(selected_years)].copy()
+    if selected_states:
+        spec_filtered = spec_filtered[spec_filtered["State"].isin(selected_states)]
 
-if spec_df_full is not None and not spec_df_full.empty and not spec_filtered.empty:
-    spec_ctrl_cols = st.columns([3, 1])
-    with spec_ctrl_cols[0]:
-        spec_top_n = render_top_n_control(
-            "Show specialties appearing in each year's top:",
-            "ptb_spec_top_n",
+    if not spec_filtered.empty:
+        spec_ctrl_cols = st.columns([3, 1])
+        with spec_ctrl_cols[0]:
+            spec_top_n = render_top_n_control(
+                "Show specialties appearing in each year's top:",
+                "ptbs_spec_top_n",
+            )
+        with spec_ctrl_cols[1]:
+            spec_chart_type = st.segmented_control(
+                "Chart type",
+                options=["Bar", "Treemap"],
+                default="Treemap",
+                key="ptbs_spec_chart_type",
+            )
+
+        spec_totals = (
+            spec_filtered.groupby("Specialty", as_index=False)["Total Spending"].sum()
+            .sort_values("Total Spending", ascending=False)
+            .head(spec_top_n)
         )
-    with spec_ctrl_cols[1]:
-        spec_chart_type = st.segmented_control(
-            "Chart type",
-            options=["Bar", "Treemap"],
-            default="Treemap",
-            key="ptb_spec_chart_type",
+        spec_top_names = spec_totals["Specialty"].tolist()
+        n_specs = spec_filtered["Specialty"].nunique()
+
+        st.caption(
+            f"A specialty is included if it ranks in the top {spec_top_n} for any selected year. "
+            f"Specialty here is the **rendering** clinician's specialty — i.e., who administered the "
+            f"drug and billed Medicare. Filtered to **{state_label}**."
         )
 
-    spec_totals = (
-        spec_filtered.groupby("Specialty", as_index=False)["Total Spending"].sum()
-        .sort_values("Total Spending", ascending=False)
-        .head(spec_top_n)
-    )
-    spec_top_names = spec_totals["Specialty"].tolist()
-    n_specs = spec_filtered["Specialty"].nunique()
-
-    st.caption(
-        f"A specialty is included if it ranks in the top {spec_top_n} for any selected year. "
-        "Source: CMS Physician PUF (drug HCPCS rows only). Specialty here is the "
-        "**rendering** clinician's specialty — i.e., who administered the drug and billed "
-        "Medicare — not the ordering clinician. So this view shows where Part B drugs "
-        "are physically given (Ophthalmology offices, infusion suites, etc.) rather than "
-        "who prescribed them. Totals also do not include facility-billed administrations "
-        "(hospital outpatient), so they are lower than the Med B Drug Spending totals above."
-    )
-
-    if spec_chart_type == "Bar":
-        spec_with_year = (
-            spec_filtered[spec_filtered["Specialty"].isin(spec_top_names)]
-            .groupby(["Year", "Specialty"], as_index=False)["Total Spending"].sum()
-        )
-        spec_with_year["Year"] = spec_with_year["Year"].astype(str)
-        spec_ordered_years = sorted(spec_with_year["Year"].unique())
-        spec_color_map = {
-            y: PALETTE_YEARS[i % len(PALETTE_YEARS)]
-            for i, y in enumerate(spec_ordered_years)
-        }
-        spec_with_year["_text"] = spec_with_year["Total Spending"].apply(_fmt_cost)
-        spec_fig = px.bar(
-            spec_with_year,
-            x="Total Spending",
-            y="Specialty",
-            color="Year",
-            category_orders={"Specialty": spec_top_names, "Year": spec_ordered_years},
-            orientation="h",
-            template="plotly_white",
-            color_discrete_map=spec_color_map,
-            barmode="group",
-            custom_data=["_text"],
-        )
-        spec_tickvals, spec_ticktext = _currency_axis_ticks(spec_with_year["Total Spending"].max())
-        spec_fig.update_traces(
-            hovertemplate="<b>%{y}</b><br>%{customdata[0]}<extra>%{fullData.name}</extra>",
-        )
-        spec_fig.update_layout(
-            height=max(380, 38 * len(spec_top_names)),
-            yaxis=dict(autorange="reversed"),
-            xaxis=dict(
-                title="Total Spending",
-                tickmode="array",
-                tickvals=spec_tickvals,
-                ticktext=spec_ticktext,
-            ),
-            margin=dict(t=20, l=10, r=10, b=10),
-        )
-        chart_card(spec_fig)
-    else:
-        spec_treemap_df = spec_totals.copy()
-        spec_treemap_df["_text"] = spec_treemap_df["Total Spending"].apply(_fmt_cost)
-        spec_fig = px.treemap(
-            spec_treemap_df,
-            path=["Specialty"],
-            values="Total Spending",
-            color="Specialty",
-            color_discrete_sequence=PALETTE_DRUGS,
-            custom_data=["_text"],
-        )
-        spec_fig.update_traces(
-            texttemplate="<b>%{label}</b><br>%{customdata[0]}",
-            hovertemplate="<b>%{label}</b><br>Total Spending: %{customdata[0]}<extra></extra>",
-        )
-        spec_fig.update_layout(margin=dict(t=16, l=10, r=10, b=10), height=520)
-        spec_others_stats = compute_others_stats(spec_filtered, "Specialty", spec_top_n)
-        if spec_others_stats["count"] > 0:
-            spec_layout_cols = st.columns([4, 1], vertical_alignment="top")
-            with spec_layout_cols[0]:
-                chart_card(spec_fig)
-            with spec_layout_cols[1]:
-                render_others_card(
-                    spec_others_stats, spec_top_n,
-                    label_singular="specialty",
-                    label_plural="specialties",
-                    accent="#1d9e75",
-                )
-        else:
+        if spec_chart_type == "Bar":
+            spec_with_year = (
+                spec_filtered[spec_filtered["Specialty"].isin(spec_top_names)]
+                .groupby(["Year", "Specialty"], as_index=False)["Total Spending"].sum()
+            )
+            spec_with_year["Year"] = spec_with_year["Year"].astype(str)
+            spec_ordered_years = sorted(spec_with_year["Year"].unique())
+            spec_color_map = {
+                y: PALETTE_YEARS[i % len(PALETTE_YEARS)]
+                for i, y in enumerate(spec_ordered_years)
+            }
+            spec_with_year["_text"] = spec_with_year["Total Spending"].apply(_fmt_cost)
+            spec_fig = px.bar(
+                spec_with_year,
+                x="Total Spending",
+                y="Specialty",
+                color="Year",
+                category_orders={"Specialty": spec_top_names, "Year": spec_ordered_years},
+                orientation="h",
+                template="plotly_white",
+                color_discrete_map=spec_color_map,
+                barmode="group",
+                custom_data=["_text"],
+            )
+            spec_tickvals, spec_ticktext = _currency_axis_ticks(spec_with_year["Total Spending"].max())
+            spec_fig.update_traces(
+                hovertemplate="<b>%{y}</b><br>%{customdata[0]}<extra>%{fullData.name}</extra>",
+            )
+            spec_fig.update_layout(
+                height=max(380, 38 * len(spec_top_names)),
+                yaxis=dict(autorange="reversed"),
+                xaxis=dict(
+                    title="Total Spending",
+                    tickmode="array",
+                    tickvals=spec_tickvals,
+                    ticktext=spec_ticktext,
+                ),
+                margin=dict(t=20, l=10, r=10, b=10),
+            )
             chart_card(spec_fig)
+        else:
+            spec_treemap_df = spec_totals.copy()
+            spec_treemap_df["_text"] = spec_treemap_df["Total Spending"].apply(_fmt_cost)
+            spec_fig = px.treemap(
+                spec_treemap_df,
+                path=["Specialty"],
+                values="Total Spending",
+                color="Specialty",
+                color_discrete_sequence=PALETTE_DRUGS,
+                custom_data=["_text"],
+            )
+            spec_fig.update_traces(
+                texttemplate="<b>%{label}</b><br>%{customdata[0]}",
+                hovertemplate="<b>%{label}</b><br>Total Spending: %{customdata[0]}<extra></extra>",
+            )
+            spec_fig.update_layout(margin=dict(t=16, l=10, r=10, b=10), height=520)
+            spec_others_stats = compute_others_stats(spec_filtered, "Specialty", spec_top_n)
+            if spec_others_stats["count"] > 0:
+                spec_layout_cols = st.columns([4, 1], vertical_alignment="top")
+                with spec_layout_cols[0]:
+                    chart_card(spec_fig)
+                with spec_layout_cols[1]:
+                    render_others_card(
+                        spec_others_stats, spec_top_n,
+                        label_singular="specialty",
+                        label_plural="specialties",
+                        accent="#1d9e75",
+                    )
+            else:
+                chart_card(spec_fig)
 
 st.divider()
 
@@ -668,7 +700,7 @@ trend_picks = st.multiselect(
 )
 if trend_picks:
     trend_df = (
-        filtered[filtered[drug_col].isin(trend_picks)]
+        ranked[ranked[drug_col].isin(trend_picks)]
         .groupby(["Year", drug_col], as_index=False)["Total Spending"].sum()
     )
     trend_df["_text"] = trend_df["Total Spending"].apply(_fmt_cost)
@@ -703,23 +735,19 @@ st.divider()
 
 section_heading("Drill-down: full detail by HCPCS code")
 st.caption(
-    "One row per (HCPCS code, brand, year). HCPCS codes are how Part B drugs are billed; "
-    "the same generic may have multiple HCPCS codes (e.g. different doses, formulations)."
+    "One row per (HCPCS code, state, year). "
+    f"Filtered to **{state_label}**."
 )
 display = filtered.sort_values(["Year", "Total Spending"], ascending=[True, False]).copy()
 display_cols = [
-    "Year", "HCPCS Code", "HCPCS Description", "Brand Name", "Generic Name",
-    "Total Spending", "Total Dosage Units", "Total Claims", "Total Beneficiaries",
-    "Avg Spending per Dosage Unit", "Avg Spending per Beneficiary",
+    "Year", "State", "HCPCS Code", "HCPCS Description", "Brand Name", "Generic Name",
+    "Total Spending", "Total Services", "Total Beneficiaries",
 ]
 display = display[[c for c in display_cols if c in display.columns]]
 fmt = {
     "Total Spending": "${:,.0f}",
-    "Total Dosage Units": "{:,.0f}",
-    "Total Claims": "{:,.0f}",
+    "Total Services": "{:,.0f}",
     "Total Beneficiaries": "{:,.0f}",
-    "Avg Spending per Dosage Unit": "${:,.2f}",
-    "Avg Spending per Beneficiary": "${:,.2f}",
 }
 fmt = {k: v for k, v in fmt.items() if k in display.columns}
 st.dataframe(display.style.format(fmt), use_container_width=True, hide_index=True)

@@ -9,13 +9,21 @@ Source: CMS "Medicare Physician & Other Practitioners — by Provider and Servic
 Outputs uploaded to mbateya/medicare_part_d_prescribers:
 - partb_prescribers/year=YYYY/State=XX/data_0.parquet  — per-NPI per-HCPCS rows
 - partb_drug_by_specialty.parquet                       — Year × Specialty × HCPCS rollup
+- partb_drug_by_state.parquet                           — Year × State × HCPCS rollup
+                                                          (with brand/generic joined)
+- partb_drug_by_state_specialty.parquet                 — Year × State × Specialty × HCPCS rollup
 
 Run from the repo root (downloads ~6 GB of raw CSVs to hf_staging/raw/, ~one-off):
     python scripts/build_partb_prescriber_dataset.py
+
+Rebuild rollups only (skips CSV download/partition writes; reuses partitions
+in hf_staging/partb_prescribers/):
+    python scripts/build_partb_prescriber_dataset.py --rollup-only
 """
 
 from __future__ import annotations
 
+import argparse
 import os
 import shutil
 import time
@@ -31,7 +39,14 @@ STAGING_ROOT = REPO_DIR / "hf_staging"
 RAW_DIR = STAGING_ROOT / "raw"
 PRESCRIBER_DIR = STAGING_ROOT / "partb_prescribers"
 SPECIALTY_ROLLUP = STAGING_ROOT / "partb_drug_by_specialty.parquet"
+STATE_ROLLUP = STAGING_ROOT / "partb_drug_by_state.parquet"
+STATE_SPECIALTY_ROLLUP = STAGING_ROOT / "partb_drug_by_state_specialty.parquet"
 SECRETS_FILE = REPO_DIR / ".streamlit" / "secrets.toml"
+
+HF_DATASET_RESOLVE_BASE = (
+    "https://huggingface.co/datasets/mbateya/medicare_part_d_prescribers/resolve/main"
+)
+PART_B_DRUG_SPENDING_URL = f"{HF_DATASET_RESOLVE_BASE}/part_b_drug_spending.parquet"
 
 DEFAULT_DATASET_ID = "mbateya/medicare_part_d_prescribers"
 HF_DATASET_ID = os.environ.get("HF_DATASET_ID", DEFAULT_DATASET_ID)
@@ -163,6 +178,124 @@ def build_specialty_rollup(con: duckdb.DuckDBPyConnection) -> int:
     return rows
 
 
+def _register_brand_lookup(con: duckdb.DuckDBPyConnection) -> None:
+    """HCPCS Code → Brand Name / Generic Name view, sourced from part_b_drug_spending."""
+    con.execute("INSTALL httpfs; LOAD httpfs;")
+    con.execute(
+        f"""
+        CREATE OR REPLACE VIEW partb_brand_lookup AS
+        SELECT
+            "HCPCS Code",
+            STRING_AGG(DISTINCT
+                rtrim("Brand Name", '*'),   '; ' ORDER BY rtrim("Brand Name", '*')
+            ) AS "Brand Name",
+            STRING_AGG(DISTINCT "Generic Name", '; ' ORDER BY "Generic Name") AS "Generic Name"
+        FROM read_parquet('{PART_B_DRUG_SPENDING_URL}')
+        WHERE "HCPCS Code" IS NOT NULL
+        GROUP BY "HCPCS Code"
+        """
+    )
+
+
+def build_state_rollup(con: duckdb.DuckDBPyConnection) -> int:
+    """Year × State × HCPCS Code rollup with Brand/Generic joined.
+
+    Powers the Med B Drugs by State & Provider Specialty dashboard.
+    ~100K rows, ~5-10 MB compressed.
+    """
+    if STATE_ROLLUP.exists():
+        STATE_ROLLUP.unlink()
+    print(f"Building rollup → {STATE_ROLLUP.relative_to(REPO_DIR)}")
+    _register_brand_lookup(con)
+    con.execute(
+        f"""
+        COPY (
+            SELECT
+                p.Year,
+                p.State,
+                p."HCPCS Code",
+                ANY_VALUE(p."HCPCS Description") AS "HCPCS Description",
+                ANY_VALUE(b."Brand Name") AS "Brand Name",
+                ANY_VALUE(b."Generic Name") AS "Generic Name",
+                SUM(p."Total Spending") AS "Total Spending",
+                SUM(p."Total Services") AS "Total Services",
+                SUM(p."Total Beneficiaries") AS "Total Beneficiaries"
+            FROM read_parquet('{PRESCRIBER_DIR.as_posix()}/**/*.parquet',
+                              hive_partitioning = 1) p
+            LEFT JOIN partb_brand_lookup b USING ("HCPCS Code")
+            GROUP BY p.Year, p.State, p."HCPCS Code"
+        ) TO '{STATE_ROLLUP.as_posix()}' (
+            FORMAT PARQUET,
+            COMPRESSION ZSTD
+        );
+        """
+    )
+    rows = con.execute(
+        f"SELECT COUNT(*) FROM read_parquet('{STATE_ROLLUP.as_posix()}')"
+    ).fetchone()[0]
+    size_kb = STATE_ROLLUP.stat().st_size / 1024
+    print(f"  state rollup: {rows:,} rows · {size_kb:.0f} KB")
+    return rows
+
+
+def build_state_specialty_rollup(con: duckdb.DuckDBPyConnection) -> int:
+    """Year × State × Specialty × HCPCS rollup. Powers the Top Specialties chart
+    on the state-level dashboard (and could replace the existing specialty
+    rollup if the state filter is added to the national dashboard later)."""
+    if STATE_SPECIALTY_ROLLUP.exists():
+        STATE_SPECIALTY_ROLLUP.unlink()
+    print(f"Building rollup → {STATE_SPECIALTY_ROLLUP.relative_to(REPO_DIR)}")
+    con.execute(
+        f"""
+        COPY (
+            SELECT
+                Year,
+                State,
+                Specialty,
+                "HCPCS Code",
+                ANY_VALUE("HCPCS Description") AS "HCPCS Description",
+                SUM("Total Spending") AS "Total Spending",
+                SUM("Total Services") AS "Total Services",
+                SUM("Total Beneficiaries") AS "Total Beneficiaries"
+            FROM read_parquet('{PRESCRIBER_DIR.as_posix()}/**/*.parquet',
+                              hive_partitioning = 1)
+            GROUP BY Year, State, Specialty, "HCPCS Code"
+        ) TO '{STATE_SPECIALTY_ROLLUP.as_posix()}' (
+            FORMAT PARQUET,
+            COMPRESSION ZSTD
+        );
+        """
+    )
+    rows = con.execute(
+        f"SELECT COUNT(*) FROM read_parquet('{STATE_SPECIALTY_ROLLUP.as_posix()}')"
+    ).fetchone()[0]
+    size_kb = STATE_SPECIALTY_ROLLUP.stat().st_size / 1024
+    print(f"  state-specialty rollup: {rows:,} rows · {size_kb:.0f} KB")
+    return rows
+
+
+def upload_rollups_only(token: str) -> None:
+    """Upload only the rollup parquets (skip the partitioned partb_prescribers/)."""
+    api = HfApi(token=token)
+    for path, msg in [
+        (SPECIALTY_ROLLUP, "Refresh Med B drug-by-specialty rollup"),
+        (STATE_ROLLUP, "Add Med B drug-by-state rollup"),
+        (STATE_SPECIALTY_ROLLUP, "Add Med B drug-by-state-specialty rollup"),
+    ]:
+        if not path.exists():
+            print(f"  skip (missing): {path.name}")
+            continue
+        print(f"Uploading {path.name} → {HF_DATASET_ID}/{path.name}")
+        api.upload_file(
+            path_or_fileobj=str(path),
+            path_in_repo=path.name,
+            repo_id=HF_DATASET_ID,
+            repo_type="dataset",
+            commit_message=msg,
+        )
+    print(f"Done → https://huggingface.co/datasets/{HF_DATASET_ID}")
+
+
 def upload(token: str) -> None:
     api = HfApi(token=token)
     print(f"Uploading partb_prescribers/ → {HF_DATASET_ID}/partb_prescribers/")
@@ -173,31 +306,45 @@ def upload(token: str) -> None:
         repo_type="dataset",
         commit_message="Add Med B prescriber dataset (2021-2023)",
     )
-    print(f"Uploading {SPECIALTY_ROLLUP.name} → {HF_DATASET_ID}/{SPECIALTY_ROLLUP.name}")
-    api.upload_file(
-        path_or_fileobj=str(SPECIALTY_ROLLUP),
-        path_in_repo=SPECIALTY_ROLLUP.name,
-        repo_id=HF_DATASET_ID,
-        repo_type="dataset",
-        commit_message="Add Med B drug-by-specialty rollup",
+    upload_rollups_only(token)
+
+
+def parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument(
+        "--rollup-only",
+        action="store_true",
+        help="Skip CSV download and partition writes; rebuild rollups from "
+             "existing partitions in hf_staging/partb_prescribers/ and upload "
+             "only the rollup parquets.",
     )
-    print(f"Done → https://huggingface.co/datasets/{HF_DATASET_ID}")
+    return p.parse_args()
 
 
 def main() -> None:
+    args = parse_args()
     token = load_token()
     PRESCRIBER_DIR.mkdir(parents=True, exist_ok=True)
 
     con = duckdb.connect(":memory:")
     con.execute("PRAGMA threads=4;")
 
-    total = 0
-    for year, url in CMS_PUF_URLS.items():
-        csv_path = download_csv(year, url)
-        total += build_year(con, year, csv_path)
+    if not args.rollup_only:
+        total = 0
+        for year, url in CMS_PUF_URLS.items():
+            csv_path = download_csv(year, url)
+            total += build_year(con, year, csv_path)
+        print(f"\nTotal drug-row records across years: {total:,}")
+    else:
+        if not PRESCRIBER_DIR.exists() or not list(PRESCRIBER_DIR.glob("year=*/State=*/*.parquet")):
+            raise SystemExit(
+                f"--rollup-only requires existing partitions under "
+                f"{PRESCRIBER_DIR.relative_to(REPO_DIR)}/. Run without the flag first."
+            )
 
-    print(f"\nTotal drug-row records across years: {total:,}")
     build_specialty_rollup(con)
+    build_state_rollup(con)
+    build_state_specialty_rollup(con)
 
     # Spend summary for sanity-checking against the Med B Drugs Dashboard
     by_year = con.execute(
@@ -212,7 +359,10 @@ def main() -> None:
     for y, v in by_year:
         print(f"  {y}: ${v / 1e9:.2f}B")
 
-    upload(token)
+    if args.rollup_only:
+        upload_rollups_only(token)
+    else:
+        upload(token)
 
 
 if __name__ == "__main__":

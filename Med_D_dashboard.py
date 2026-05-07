@@ -573,6 +573,19 @@ def render_top_n_control(label: str, key: str) -> int:
     return int(selection or 10)
 
 
+def render_year_control(year_options: list[int], key: str) -> list[int]:
+    options = ["All", *year_options]
+    selection = st.segmented_control(
+        "Year",
+        options=options,
+        default="All",
+        key=key,
+    )
+    if selection == "All" or selection is None:
+        return year_options
+    return [int(selection)]
+
+
 def apply_filters(
     df: pd.DataFrame,
     years: list[int],
@@ -757,6 +770,32 @@ def insight_strip(text: str) -> None:
     )
 
 
+def spending_definition_note() -> None:
+    st.markdown(
+        """
+<div style="
+    background:#fff7e6;
+    border-left:3px solid #ef9f27;
+    border-radius:0 8px 8px 0;
+    padding:10px 14px;
+    font-size:13px;
+    color:#7a4f00;
+    margin:10px 0 6px;
+    line-height:1.6;
+">
+<strong>About gross drug cost:</strong> This reflects CMS <code>Tot_Drug_Cst</code>
+from the Part D Prescribers by Provider and Drug detail file. It includes amounts
+paid by Medicare, beneficiaries, subsidies, and third parties before manufacturer
+rebates or other direct and indirect remuneration. Because the provider-drug
+detail file suppresses low-volume records, summed totals can understate true
+all-Part-D gross covered drug costs and should not be compared directly with
+Medicare net benefit payments.
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+
 def chart_card(fig) -> None:
     with st.container():
         st.markdown(
@@ -856,48 +895,48 @@ def render_metric_cards(filtered_df: pd.DataFrame, drug_col: str) -> None:
 
     st.markdown(
         f"""
-<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:18px 0 6px;">
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:8px;margin:14px 0 4px;">
 
-  <div style="background:white;border:0.5px solid #e8e8e8;border-radius:10px;padding:14px 16px;position:relative;overflow:hidden;">
+  <div style="background:white;border:0.5px solid #e8e8e8;border-radius:8px;padding:10px 12px;position:relative;overflow:hidden;min-height:82px;">
     <div style="position:absolute;top:0;left:0;width:3px;height:100%;background:#378add;border-radius:10px 0 0 10px;"></div>
-    <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:#888;margin-bottom:6px;">Total drug cost</div>
-    <div style="font-size:24px;font-weight:600;color:#111;line-height:1;">{_fmt_cost(total_cost)}</div>
-    <div style="font-size:12px;color:#1d9e75;margin-top:4px;">All selected years</div>
+    <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:#888;margin-bottom:5px;">Gross drug cost</div>
+    <div style="font-size:21px;font-weight:600;color:#111;line-height:1;">{_fmt_cost(total_cost)}</div>
+    <div style="font-size:11px;color:#1d9e75;margin-top:4px;">Selected period</div>
   </div>
 
-  <div style="background:white;border:0.5px solid #e8e8e8;border-radius:10px;padding:14px 16px;position:relative;overflow:hidden;">
+  <div style="background:white;border:0.5px solid #e8e8e8;border-radius:8px;padding:10px 12px;position:relative;overflow:hidden;min-height:82px;">
     <div style="position:absolute;top:0;left:0;width:3px;height:100%;background:#7f77dd;border-radius:10px 0 0 10px;"></div>
-    <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:#888;margin-bottom:6px;">Total claims</div>
-    <div style="font-size:24px;font-weight:600;color:#111;line-height:1;">{_fmt_count(total_claims)}</div>
-    <div style="font-size:12px;color:#888;margin-top:4px;">All selected years</div>
+    <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:#888;margin-bottom:5px;">Total claims</div>
+    <div style="font-size:21px;font-weight:600;color:#111;line-height:1;">{_fmt_count(total_claims)}</div>
+    <div style="font-size:11px;color:#888;margin-top:4px;">Selected period</div>
   </div>
 
-  <div style="background:white;border:0.5px solid #e8e8e8;border-radius:10px;padding:14px 16px;position:relative;overflow:hidden;">
+  <div style="background:white;border:0.5px solid #e8e8e8;border-radius:8px;padding:10px 12px;position:relative;overflow:hidden;min-height:82px;">
     <div style="position:absolute;top:0;left:0;width:3px;height:100%;background:#1d9e75;border-radius:10px 0 0 10px;"></div>
-    <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:#888;margin-bottom:6px;">Avg cost per claim</div>
-    <div style="font-size:24px;font-weight:600;color:#111;line-height:1;">${avg_cost_per_claim:,.2f}</div>
-    <div style="font-size:12px;color:#888;margin-top:4px;">Across all drugs</div>
+    <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:#888;margin-bottom:5px;">Avg cost per claim</div>
+    <div style="font-size:21px;font-weight:600;color:#111;line-height:1;">${avg_cost_per_claim:,.2f}</div>
+    <div style="font-size:11px;color:#888;margin-top:4px;">Across all drugs</div>
   </div>
 
-  <div style="background:white;border:0.5px solid #e8e8e8;border-radius:10px;padding:14px 16px;position:relative;overflow:hidden;">
+  <div style="background:white;border:0.5px solid #e8e8e8;border-radius:8px;padding:10px 12px;position:relative;overflow:hidden;min-height:82px;">
     <div style="position:absolute;top:0;left:0;width:3px;height:100%;background:#ef9f27;border-radius:10px 0 0 10px;"></div>
-    <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:#888;margin-bottom:6px;">Total 30-day fills</div>
-    <div style="font-size:24px;font-weight:600;color:#111;line-height:1;">{_fmt_count(total_fills)}</div>
-    <div style="font-size:12px;color:#888;margin-top:4px;">All selected years</div>
+    <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:#888;margin-bottom:5px;">Total 30-day fills</div>
+    <div style="font-size:21px;font-weight:600;color:#111;line-height:1;">{_fmt_count(total_fills)}</div>
+    <div style="font-size:11px;color:#888;margin-top:4px;">Selected period</div>
   </div>
 
-  <div style="background:white;border:0.5px solid #e8e8e8;border-radius:10px;padding:14px 16px;position:relative;overflow:hidden;">
+  <div style="background:white;border:0.5px solid #e8e8e8;border-radius:8px;padding:10px 12px;position:relative;overflow:hidden;min-height:82px;">
     <div style="position:absolute;top:0;left:0;width:3px;height:100%;background:#d85a30;border-radius:10px 0 0 10px;"></div>
-    <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:#888;margin-bottom:6px;">Unique drugs</div>
-    <div style="font-size:24px;font-weight:600;color:#111;line-height:1;">{unique_drugs:,}</div>
-    <div style="font-size:12px;color:#888;margin-top:4px;">Current drug grouping</div>
+    <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:#888;margin-bottom:5px;">Unique drugs</div>
+    <div style="font-size:21px;font-weight:600;color:#111;line-height:1;">{unique_drugs:,}</div>
+    <div style="font-size:11px;color:#888;margin-top:4px;">Current grouping</div>
   </div>
 
-  <div style="background:white;border:0.5px solid #e8e8e8;border-radius:10px;padding:14px 16px;position:relative;overflow:hidden;">
+  <div style="background:white;border:0.5px solid #e8e8e8;border-radius:8px;padding:10px 12px;position:relative;overflow:hidden;min-height:82px;">
     <div style="position:absolute;top:0;left:0;width:3px;height:100%;background:#185fa5;border-radius:10px 0 0 10px;"></div>
-    <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:#888;margin-bottom:6px;">Cost growth (first&rarr;last yr)</div>
-    <div style="font-size:24px;font-weight:600;color:#111;line-height:1;">{growth_str}</div>
-    <div style="font-size:12px;color:#888;margin-top:4px;">{growth_sub}</div>
+    <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:#888;margin-bottom:5px;">Cost growth</div>
+    <div style="font-size:21px;font-weight:600;color:#111;line-height:1;">{growth_str}</div>
+    <div style="font-size:11px;color:#888;margin-top:4px;">{growth_sub}</div>
   </div>
 
 </div>
@@ -1665,9 +1704,9 @@ def main() -> None:
     state_options = _select_options(df["State"])
     specialty_options = _select_options(df["Specialty"])
 
-    filter_cols = st.columns([1.1, 1.7, 2.6, 1.3])
+    filter_cols = st.columns([1.6, 1.7, 2.4, 1.3])
     with filter_cols[0]:
-        selected_years = st.multiselect("Year", year_options, default=year_options)
+        selected_years = render_year_control(year_options, "mdd_year")
     with filter_cols[1]:
         selected_states = st.multiselect("State", state_options)
     with filter_cols[2]:
@@ -1706,12 +1745,16 @@ def main() -> None:
     )
 
     render_metric_cards(filtered_df, drug_col)
+    spending_definition_note()
 
     st.divider()
 
     section_heading("Total yearly spending")
     yearly_spending = summarize_yearly_spending(filtered_df)
-    st.caption("Total drug cost by year for the current filters.")
+    st.caption(
+        "Gross Part D drug cost by year for the current filters, before rebates "
+        "and subject to CMS detail-file suppression."
+    )
     if not yearly_spending.empty:
         years_sorted = yearly_spending["Year"].tolist()
         if len(years_sorted) >= 2:
@@ -1735,7 +1778,7 @@ def main() -> None:
             )
     yearly_fig = render_yearly_spending_chart(
         yearly_spending,
-        _section_title("Total drug cost trend", context=context),
+        _section_title("Gross drug cost trend", context=context),
     )
     chart_card(yearly_fig)
 
