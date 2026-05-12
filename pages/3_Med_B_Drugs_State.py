@@ -15,6 +15,8 @@ import plotly.express as px
 import streamlit as st
 from huggingface_hub import hf_hub_download
 
+from dashboard_tables import render_detail_table
+
 HF_DATASET_ID = "mbateya/medicare_part_d_prescribers"
 HF_DRUG_BY_STATE_FILE = "partb_drug_by_state.parquet"
 HF_DRUG_BY_STATE_SPECIALTY_FILE = "partb_drug_by_state_specialty.parquet"
@@ -744,10 +746,9 @@ display_cols = [
     "Total Spending", "Total Services", "Total Beneficiaries",
 ]
 display = display[[c for c in display_cols if c in display.columns]]
-fmt = {
-    "Total Spending": "${:,.0f}",
-    "Total Services": "{:,.0f}",
-    "Total Beneficiaries": "{:,.0f}",
-}
-fmt = {k: v for k, v in fmt.items() if k in display.columns}
-st.dataframe(display.style.format(fmt), use_container_width=True, hide_index=True)
+render_detail_table(
+    display,
+    primary_metric="Total Spending",
+    entity_col="Brand Name",
+    height=520,
+)

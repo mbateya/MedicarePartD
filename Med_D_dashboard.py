@@ -14,6 +14,8 @@ from huggingface_hub import hf_hub_download
 from plotly.subplots import make_subplots
 import streamlit as st
 
+from dashboard_tables import render_chart_detail_table
+
 
 APP_TITLE = "Medicare Part D Prescribing Dashboard"
 APP_SUBTITLE = (
@@ -297,64 +299,6 @@ hr { border-color: #f0f0f0 !important; }
 """,
     unsafe_allow_html=True,
 )
-
-DATAFRAME_CSS = """
-<style>
-[data-testid="stDataFrame"] table {
-    font-size: 12px !important;
-    border-collapse: collapse;
-}
-[data-testid="stDataFrame"] th {
-    font-size: 11px !important;
-    font-weight: 600 !important;
-    text-transform: uppercase;
-    letter-spacing: .05em;
-    color: #888 !important;
-    background: #fafafa !important;
-    border-bottom: 1px solid #e8e8e8 !important;
-    padding: 8px 10px !important;
-}
-[data-testid="stDataFrame"] td {
-    padding: 7px 10px !important;
-    border-bottom: 0.5px solid #f3f3f3 !important;
-    color: #222 !important;
-}
-[data-testid="stDataFrame"] tr:hover td {
-    background: #f7f9ff !important;
-}
-div.filter-summary {
-    margin-top: 0.85rem;
-    margin-bottom: 0.5rem;
-    padding: 0.95rem 1rem;
-    background: #f8fbfc;
-    border: 1px solid #e5eef2;
-    border-radius: 16px;
-}
-div.filter-summary-title {
-    color: #4e5a64;
-    font-size: 0.92rem;
-    font-weight: 700;
-    margin-bottom: 0.55rem;
-}
-div.filter-chip-row {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.45rem;
-}
-span.filter-chip {
-    display: inline-flex;
-    align-items: center;
-    padding: 0.38rem 0.65rem;
-    border-radius: 999px;
-    background: #edf6f3;
-    border: 1px solid #d6e9e1;
-    color: #30584c;
-    font-size: 0.84rem;
-    font-weight: 600;
-}
-</style>
-"""
-
 
 def infer_year_from_filename(path: Path) -> int | None:
     match = re.search(r"(20\d{2})", path.name)
@@ -703,24 +647,6 @@ def summarize_trends(df: pd.DataFrame, grouping: str, selected_drugs: list[str])
     trend_df = df[df[drug_col].isin(selected_drugs)]
     summary = _summarize(trend_df, ["Year", drug_col])
     return summary.rename(columns={drug_col: "Drug Name"}).sort_values(["Drug Name", "Year"])
-
-
-def format_tables(df: pd.DataFrame) -> pd.io.formats.style.Styler:
-    currency_cols = [
-        col
-        for col in ["Cost per Claim", "Cost per 30-Day Fill"]
-        if col in df.columns
-    ]
-    number_cols = [
-        col
-        for col in ["Total Claims", "Total 30-Day Fills", "Total Days Supply"]
-        if col in df.columns
-    ]
-    formats = {col: "${:,.2f}" for col in currency_cols}
-    formats.update({col: "{:,.0f}" for col in number_cols})
-    if "Total Drug Cost" in df.columns:
-        formats["Total Drug Cost"] = fmt_currency
-    return df.style.format(formats)
 
 
 def _filter_context(
@@ -1938,23 +1864,21 @@ def main() -> None:
             orientation="h",
         )
         chart_card(drug_fig)
-    st.markdown(DATAFRAME_CSS, unsafe_allow_html=True)
-    st.dataframe(
-        format_tables(
-            top_drugs[
-                [
-                    "Year",
-                    "Drug Name",
-                    "Total Drug Cost",
-                    "Total Claims",
-                    "Total 30-Day Fills",
-                    "Cost per Claim",
-                    "Cost per 30-Day Fill",
-                ]
+    render_chart_detail_table(
+        top_drugs[
+            [
+                "Year",
+                "Drug Name",
+                "Total Drug Cost",
+                "Total Claims",
+                "Total 30-Day Fills",
+                "Cost per Claim",
+                "Cost per 30-Day Fill",
             ]
-        ),
-        use_container_width=True,
-        hide_index=True,
+        ],
+        label="View detailed drug rows",
+        primary_metric="Total Drug Cost",
+        entity_col="Drug Name",
     )
 
     st.divider()
@@ -2024,22 +1948,21 @@ def main() -> None:
             year_palette=THERAPEUTIC_YEAR_PALETTE,
         )
         chart_card(ta_fig)
-    st.dataframe(
-        format_tables(
-            top_therapeutic_classes[
-                [
-                    "Year",
-                    "Therapeutic Class",
-                    "Total Drug Cost",
-                    "Total Claims",
-                    "Total 30-Day Fills",
-                    "Cost per Claim",
-                    "Cost per 30-Day Fill",
-                ]
+    render_chart_detail_table(
+        top_therapeutic_classes[
+            [
+                "Year",
+                "Therapeutic Class",
+                "Total Drug Cost",
+                "Total Claims",
+                "Total 30-Day Fills",
+                "Cost per Claim",
+                "Cost per 30-Day Fill",
             ]
-        ),
-        use_container_width=True,
-        hide_index=True,
+        ],
+        label="View detailed therapeutic class rows",
+        primary_metric="Total Drug Cost",
+        entity_col="Therapeutic Class",
     )
 
     st.divider()
@@ -2106,22 +2029,21 @@ def main() -> None:
             year_palette=SPECIALTY_YEAR_PALETTE,
         )
         chart_card(specialty_fig)
-    st.dataframe(
-        format_tables(
-            top_specialties[
-                [
-                    "Year",
-                    "Specialty",
-                    "Total Drug Cost",
-                    "Total Claims",
-                    "Total 30-Day Fills",
-                    "Cost per Claim",
-                    "Cost per 30-Day Fill",
-                ]
+    render_chart_detail_table(
+        top_specialties[
+            [
+                "Year",
+                "Specialty",
+                "Total Drug Cost",
+                "Total Claims",
+                "Total 30-Day Fills",
+                "Cost per Claim",
+                "Cost per 30-Day Fill",
             ]
-        ),
-        use_container_width=True,
-        hide_index=True,
+        ],
+        label="View detailed specialty rows",
+        primary_metric="Total Drug Cost",
+        entity_col="Specialty",
     )
 
     st.divider()
@@ -2168,22 +2090,21 @@ def main() -> None:
         fig.update_xaxes(dtick=1, tickmode="linear")
         fig.update_yaxes(tickvals=tick_vals, ticktext=tick_text, rangemode="tozero")
         chart_card(fig)
-        st.dataframe(
-            format_tables(
-                trend_df[
-                    [
-                        "Year",
-                        "Drug Name",
-                        "Total Drug Cost",
-                        "Total Claims",
-                        "Total 30-Day Fills",
-                        "Cost per Claim",
-                        "Cost per 30-Day Fill",
-                    ]
+        render_chart_detail_table(
+            trend_df[
+                [
+                    "Year",
+                    "Drug Name",
+                    "Total Drug Cost",
+                    "Total Claims",
+                    "Total 30-Day Fills",
+                    "Cost per Claim",
+                    "Cost per 30-Day Fill",
                 ]
-            ),
-            use_container_width=True,
-            hide_index=True,
+            ],
+            label="View detailed trend rows",
+            primary_metric="Total Drug Cost",
+            entity_col="Drug Name",
         )
 
     st.divider()

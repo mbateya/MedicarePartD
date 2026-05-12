@@ -6,6 +6,8 @@ import duckdb
 import pandas as pd
 import streamlit as st
 
+from dashboard_tables import render_results_table
+
 HF_DATASET_BASE = (
     "https://huggingface.co/datasets/mbateya/medicare_part_d_prescribers/resolve/main"
 )
@@ -251,22 +253,6 @@ def search_provider_drugs(part: str, year: int, state: str, name: str, top_n: in
     ).fetchdf()
 
 
-def _format_currency(df: pd.DataFrame) -> pd.io.formats.style.Styler:
-    money_cols = [
-        c for c in (
-            "Total Drug Cost", "Total Spending",
-            "Cost per 30-Day Fill", "Avg Medicare Payment",
-        ) if c in df.columns
-    ]
-    fmt = {c: "${:,.2f}" for c in money_cols}
-    for int_col in ("Total Claims", "Total Services", "Total Beneficiaries"):
-        if int_col in df.columns:
-            fmt[int_col] = "{:,.0f}"
-    if "Distance (mi)" in df.columns:
-        fmt["Distance (mi)"] = "{:.1f}"
-    return df.style.format(fmt)
-
-
 st.title("Provider Search")
 st.caption(
     "Search Medicare Part D pharmacy **prescribers** or Part B **rendering providers** "
@@ -353,7 +339,11 @@ if mode == "City + Radius + Drug → Top Prescribers Within Radius":
             st.success(
                 f"Top {len(df)} {part} {cfg['provider_term']} of {drug} within {radius_mi} mi of {center_city}, {US_STATES[state]} ({year})"
             )
-            st.dataframe(_format_currency(df), use_container_width=True, hide_index=True)
+            render_results_table(
+                df,
+                primary_metric=cfg["cost_alias"],
+                entity_col=cfg["provider_alias"],
+            )
     else:
         st.info("Pick a center city, radius, and drug to search.")
 
@@ -375,6 +365,10 @@ else:
                 else f"Top {len(df)} (provider, drug) pairs matching '{name}' in {US_STATES[state]} {year}"
             )
             st.success(label)
-            st.dataframe(_format_currency(df), use_container_width=True, hide_index=True)
+            render_results_table(
+                df,
+                primary_metric=cfg["cost_alias"],
+                entity_col=cfg["provider_alias"],
+            )
     else:
         st.info("Enter a provider name to search.")
