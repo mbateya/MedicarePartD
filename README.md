@@ -21,6 +21,7 @@ Data is hosted on Hugging Face and downloaded once per container into a local ca
 - Top drugs by year (brand or generic), with bar / treemap toggle
 - Top specialties by year
 - Yearly trend charts for selected drugs
+- Modern chart-detail tables are collapsed behind focused "View detailed rows" expanders to reduce dashboard clutter
 - US state choropleth with a **Total Cost / Per Capita Cost** toggle (Census Bureau Vintage 2023 population estimates)
 - **Ask AI** chatbot (Claude Haiku 4.5) that writes DuckDB SQL against the dataset and explains results in plain English
 
@@ -32,7 +33,7 @@ Data is hosted on Hugging Face and downloaded once per container into a local ca
 - Top drugs by spend (Bar / Treemap toggle) with per-section Top N control (5 / 10 / 20)
 - **Top specialties by spend** (Bar / Treemap toggle), built from CMS Physician PUF drug-HCPCS rows
 - Yearly trend chart for selected drugs
-- HCPCS-level drill-down table (one row per HCPCS code × brand × year)
+- Modern HCPCS-level drill-down table (one row per HCPCS code × brand × year) with formatted metrics and spend-share context
 - Indigo header banner and multi-hue chart palettes that keep the page visually distinct from Part D
 
 ### Med B Drugs by State & Provider Specialty
@@ -40,6 +41,7 @@ Data is hosted on Hugging Face and downloaded once per container into a local ca
 - 2021-2023 Physician PUF drug-HCPCS dashboard with segmented year selector, state filter, and Brand / Generic grouping
 - Same metric-card and chart structure as the national Med B dashboard, using Total Services instead of Total Claims
 - Total yearly spending, top drugs, top rendering specialties, yearly trends, and HCPCS-level drill-down filtered to selected states
+- Modern detail tables use consistent formatting, summary chips, and spend-share context across dashboards
 - Caveats called out in-app: totals exclude facility-billed administrations and beneficiary counts are summed across rendering providers
 
 ### Provider Search
@@ -48,7 +50,7 @@ Data is hosted on Hugging Face and downloaded once per container into a local ca
 - City + Radius (5/10/25/50/100 mi) + Drug → top prescribers within a centroid-distance radius
 - Provider Name → top drugs for matching prescribers or rendering providers
 - Hover help explains the centroid-based, all-or-nothing-per-city radius behavior
-- Part B drug input accepts brand (e.g. Keytruda), generic (e.g. pembrolizumab), HCPCS code (e.g. J9271), or HCPCS description; result table shows Brand Name and Generic Name columns. Brand/Generic mapping is joined at query time from `part_b_drug_spending.parquet`.
+- Part B drug input accepts brand (e.g. Keytruda), generic (e.g. pembrolizumab), HCPCS code (e.g. J9271), or HCPCS description; ranked result tables show Brand Name and Generic Name columns. Brand/Generic mapping is joined at query time from `part_b_drug_spending.parquet`.
 
 ## Data Architecture
 
@@ -115,6 +117,7 @@ The first page load downloads ~83 MB of dashboard parquets from HF into the loca
 .
 ├── app.py                          # Streamlit entry point; declares pages + nav
 ├── Med_D_dashboard.py              # Med D Drugs Dashboard page
+├── dashboard_tables.py             # shared modern table rendering + column formatting helpers
 ├── build_provider_summary.py       # offline ETL: top-providers-by-drug rollup
 ├── pages/
 │   ├── 1_Provider_Search.py        # Provider Search page
