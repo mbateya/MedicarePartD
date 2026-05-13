@@ -11,7 +11,13 @@ from huggingface_hub import hf_hub_download
 from plotly.subplots import make_subplots
 import streamlit as st
 
-from dashboard_ai import render_chatbot_button
+from dashboard_design import (
+    chart_card as design_chart_card,
+    insight_strip as design_insight_strip,
+    render_page_header,
+    scope_note,
+    section_heading as design_section_heading,
+)
 from dashboard_tables import render_chart_detail_table
 
 
@@ -665,48 +671,16 @@ def _filter_context(
 
 
 def section_heading(text: str) -> None:
-    st.markdown(
-        f"""
-<div style="margin: 28px 0 4px;">
-  <span style="font-size:18px;font-weight:600;color:#0a1628;">{text}</span>
-  <div style="height:2px;width:32px;background:#378add;border-radius:1px;margin-top:5px;"></div>
-</div>
-""",
-        unsafe_allow_html=True,
-    )
+    design_section_heading(text)
 
 
 def insight_strip(text: str) -> None:
-    st.markdown(
-        f"""
-<div style="
-    background: #f0f6ff;
-    border-left: 3px solid #378add;
-    border-radius: 0 8px 8px 0;
-    padding: 10px 14px;
-    font-size: 13px;
-    color: #0c447c;
-    margin: 8px 0 14px;
-    line-height: 1.6;
-">{text}</div>
-""",
-        unsafe_allow_html=True,
-    )
+    design_insight_strip(text)
 
 
 def spending_definition_note() -> None:
-    st.markdown(
+    scope_note(
         """
-<div style="
-    background:#fff7e6;
-    border-left:3px solid #ef9f27;
-    border-radius:0 8px 8px 0;
-    padding:10px 14px;
-    font-size:13px;
-    color:#7a4f00;
-    margin:10px 0 6px;
-    line-height:1.6;
-">
 <strong>About gross drug cost:</strong> This reflects CMS <code>Tot_Drug_Cst</code>
 from the Part D Prescribers by Provider and Drug detail file. It includes amounts
 paid by Medicare, beneficiaries, subsidies, and third parties before manufacturer
@@ -714,21 +688,12 @@ rebates or other direct and indirect remuneration. Because the provider-drug
 detail file suppresses low-volume records, summed totals can understate true
 all-Part-D gross covered drug costs and should not be compared directly with
 Medicare net benefit payments.
-</div>
-""",
-        unsafe_allow_html=True,
+"""
     )
 
 
 def chart_card(fig) -> None:
-    with st.container():
-        st.markdown(
-            '<div style="background:white;border:0.5px solid #e8e8e8;'
-            'border-radius:12px;padding:18px 20px;margin-bottom:12px;">',
-            unsafe_allow_html=True,
-        )
-        st.plotly_chart(fig, use_container_width=True)
-        st.markdown("</div>", unsafe_allow_html=True)
+    design_chart_card(fig)
 
 
 def style_fig(fig, title: str = "", subtitle: str = ""):
@@ -1288,31 +1253,14 @@ def _select_options(series: pd.Series) -> list[str]:
 
 
 def main() -> None:
-    st.markdown(
-        """
-<div style="
-    background: #0a1628;
-    padding: 24px 28px 22px;
-    border-radius: 12px;
-    margin-bottom: 8px;
-    display: flex;
-    align-items: flex-end;
-    justify-content: space-between;
-">
-  <div>
-    <div style="font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:#5b8dd9;margin-bottom:6px;">
-      CMS Public Data
-    </div>
-    <div style="font-size:26px;font-weight:600;color:#f0f4ff;line-height:1.2;">
-      Med D Drugs Dashboard
-    </div>
-    <div style="font-size:13px;color:#7a90b8;margin-top:5px;">
-      Interactive analysis of drug costs, claims, and specialty patterns &middot; 2021&ndash;2023
-    </div>
-  </div>
-</div>
-""",
-        unsafe_allow_html=True,
+    render_page_header(
+        title="Med D Drugs Dashboard",
+        subtitle=(
+            "Interactive analysis of pharmacy-dispensed Medicare Part D drug costs, "
+            "claims, specialties, and state patterns from 2021-2023."
+        ),
+        section="Dashboard / Med D Drugs",
+        icon="▦",
     )
 
     try:
@@ -1326,10 +1274,6 @@ def main() -> None:
     except RuntimeError as exc:
         st.error(str(exc))
         st.stop()
-
-    header_extra_cols = st.columns([6, 1])
-    with header_extra_cols[1]:
-        render_chatbot_button()
 
     year_options = sorted(df["Year"].dropna().astype(int).unique().tolist())
     state_options = _select_options(df["State"])

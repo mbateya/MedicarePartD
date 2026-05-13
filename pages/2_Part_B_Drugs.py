@@ -5,7 +5,12 @@ import plotly.express as px
 import streamlit as st
 from huggingface_hub import hf_hub_download
 
-from dashboard_ai import render_chatbot_button
+from dashboard_design import (
+    chart_card as design_chart_card,
+    insight_strip as design_insight_strip,
+    render_page_header,
+    section_heading as design_section_heading,
+)
 from dashboard_tables import render_detail_table
 
 HF_DATASET_ID = "mbateya/medicare_part_d_prescribers"
@@ -159,44 +164,15 @@ def _currency_axis_ticks(max_val: float) -> tuple[list[float], list[str]]:
 
 
 def section_heading(text: str) -> None:
-    st.markdown(
-        f"""
-<div style="margin: 28px 0 4px;">
-  <span style="font-size:18px;font-weight:600;color:{HEADER_BG};">{text}</span>
-  <div style="height:2px;width:32px;background:{ACCENT};border-radius:1px;margin-top:5px;"></div>
-</div>
-""",
-        unsafe_allow_html=True,
-    )
+    design_section_heading(text)
 
 
 def insight_strip(text: str) -> None:
-    st.markdown(
-        f"""
-<div style="
-    background:#f6f2ff;
-    border-left:3px solid {ACCENT};
-    border-radius:0 8px 8px 0;
-    padding:10px 14px;
-    font-size:13px;
-    color:{HEADER_BG};
-    margin:8px 0 14px;
-    line-height:1.6;
-">{text}</div>
-""",
-        unsafe_allow_html=True,
-    )
+    design_insight_strip(text)
 
 
 def chart_card(fig) -> None:
-    with st.container():
-        st.markdown(
-            '<div style="background:white;border:0.5px solid #e8e8e8;'
-            'border-radius:12px;padding:18px 20px;margin-bottom:12px;">',
-            unsafe_allow_html=True,
-        )
-        st.plotly_chart(fig, use_container_width=True)
-        st.markdown("</div>", unsafe_allow_html=True)
+    design_chart_card(fig)
 
 
 def render_top_n_control(label: str, key: str) -> int:
@@ -364,31 +340,14 @@ def render_yearly_spending_chart(df: pd.DataFrame):
 df_full = load_part_b()
 years_available = sorted(df_full["Year"].dropna().unique().astype(int).tolist())
 
-st.markdown(
-    f"""
-<div style="
-    background: {HEADER_BG};
-    padding: 24px 28px 22px;
-    border-radius: 12px;
-    margin-bottom: 8px;
-    display: flex;
-    align-items: flex-end;
-    justify-content: space-between;
-">
-  <div>
-    <div style="font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:{HEADER_EYEBROW};margin-bottom:6px;">
-      CMS Public Data
-    </div>
-    <div style="font-size:26px;font-weight:600;color:{HEADER_TITLE};line-height:1.2;">
-      Med B Drugs Dashboard
-    </div>
-    <div style="font-size:13px;color:{HEADER_SUBTITLE};margin-top:5px;">
-      Clinician-administered drugs (infusions, injectables) billed by HCPCS code &middot; 2019&ndash;2023
-    </div>
-  </div>
-</div>
-""",
-    unsafe_allow_html=True,
+render_page_header(
+    title="Med B Drugs Dashboard",
+    subtitle=(
+        "Annual clinician-administered Medicare Part B drug spending by HCPCS code, "
+        "brand, generic, and rendering specialty from 2019-2023."
+    ),
+    section="Dashboard / Med B Drugs",
+    icon="▦",
 )
 
 st.caption(
@@ -397,10 +356,6 @@ st.caption(
     "(infusions, injectables in office/clinic) — distinct from the Part D "
     "pharmacy-dispensed drugs on the Dashboard tab."
 )
-
-header_extra_cols = st.columns([6, 1])
-with header_extra_cols[1]:
-    render_chatbot_button()
 
 filter_cols = st.columns([1.6, 1.3])
 with filter_cols[0]:

@@ -1,10 +1,14 @@
 import streamlit as st
 
+from dashboard_design import install_design_system
+
 st.set_page_config(
     page_title="Medicare Part D",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
+
+install_design_system()
 
 dashboard = st.Page(
     "Med_D_dashboard.py",

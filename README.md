@@ -11,6 +11,8 @@ The app has four pages, accessible from a top navigation bar:
 
 The shared **Ask AI** assistant can query the aggregate Part D, Part B, and Physician PUF dashboard rollups. Individual provider-level radius/name searches remain in the Provider Search page controls.
 
+The UI uses a shared healthcare analytics design system with top navigation, light page headers, soft chart cards, modern table styling, and a prominent Ask AI command area.
+
 Data is hosted on Hugging Face and downloaded once per container into a local cache, so cold starts pay a small one-time cost and subsequent reads are local-disk speed.
 
 ## Features
@@ -120,6 +122,7 @@ The first page load downloads ~83 MB of dashboard parquets from HF into the loca
 ├── app.py                          # Streamlit entry point; declares pages + nav
 ├── Med_D_dashboard.py              # Med D Drugs Dashboard page
 ├── dashboard_ai.py                 # shared Ask AI dialog + DuckDB rollup views
+├── dashboard_design.py             # shared visual system: headers, cards, chart shells
 ├── dashboard_tables.py             # shared modern table rendering + column formatting helpers
 ├── build_provider_summary.py       # offline ETL: top-providers-by-drug rollup
 ├── pages/

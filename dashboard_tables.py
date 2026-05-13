@@ -50,10 +50,11 @@ def install_table_styles() -> None:
         """
 <style>
 [data-testid="stDataFrame"] {
-    border: 1px solid #e6ebf2;
+    border: 1px solid #e4eaf2;
     border-radius: 8px;
     overflow: hidden;
-    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+    box-shadow: 0 16px 34px rgba(31, 47, 70, 0.07);
+    background: #ffffff;
 }
 [data-testid="stDataFrame"] table {
     font-size: 12px !important;
@@ -61,7 +62,7 @@ def install_table_styles() -> None:
     border-spacing: 0 !important;
 }
 [data-testid="stDataFrame"] th {
-    background: #f8fafc !important;
+    background: #f7faff !important;
     color: #475569 !important;
     font-size: 11px !important;
     font-weight: 700 !important;
@@ -70,11 +71,11 @@ def install_table_styles() -> None:
     border-bottom: 1px solid #e2e8f0 !important;
 }
 [data-testid="stDataFrame"] td {
-    border-bottom: 1px solid #f1f5f9 !important;
+    border-bottom: 1px solid #edf2f8 !important;
     color: #111827 !important;
 }
 [data-testid="stDataFrame"] tr:hover td {
-    background: #f8fbff !important;
+    background: #f3f8ff !important;
 }
 .modern-table-summary {
     display: flex;
@@ -86,7 +87,7 @@ def install_table_styles() -> None:
     font-size: 12px;
 }
 .modern-table-summary span {
-    background: #f8fafc;
+    background: #ffffff;
     border: 1px solid #e2e8f0;
     border-radius: 999px;
     padding: 4px 9px;

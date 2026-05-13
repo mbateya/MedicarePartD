@@ -6,7 +6,7 @@ import duckdb
 import pandas as pd
 import streamlit as st
 
-from dashboard_ai import render_chatbot_button
+from dashboard_design import render_page_header
 from dashboard_tables import render_results_table
 
 HF_DATASET_BASE = (
@@ -254,16 +254,15 @@ def search_provider_drugs(part: str, year: int, state: str, name: str, top_n: in
     ).fetchdf()
 
 
-st.title("Provider Search")
-st.caption(
-    "Search Medicare Part D pharmacy **prescribers** or Part B **rendering providers** "
-    "(clinicians who administered the drug and billed Medicare for it) by city + drug "
-    "or by provider name. Data hosted on Hugging Face."
+render_page_header(
+    title="Provider Search",
+    subtitle=(
+        "Search Medicare Part D prescribers or Part B rendering providers by city, "
+        "radius, drug, or provider name. Ask AI can answer aggregate rollup questions."
+    ),
+    section="Search / Providers",
+    icon="⌕",
 )
-
-header_extra_cols = st.columns([6, 1])
-with header_extra_cols[1]:
-    render_chatbot_button()
 
 part = st.radio(
     "Medicare Part",
