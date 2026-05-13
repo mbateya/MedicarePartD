@@ -9,6 +9,8 @@ The app has four pages, accessible from a top navigation bar:
 - **Med B Drugs by State & Provider Specialty** — state-aware Medicare Part B drug dashboard sourced from CMS Physician PUF rendering-provider data
 - **Provider Search** — drill down to individual Part D prescribers or Part B rendering providers by city, radius, or name
 
+The shared **Ask AI** assistant can query the aggregate Part D, Part B, and Physician PUF dashboard rollups. Individual provider-level radius/name searches remain in the Provider Search page controls.
+
 Data is hosted on Hugging Face and downloaded once per container into a local cache, so cold starts pay a small one-time cost and subsequent reads are local-disk speed.
 
 ## Features
@@ -23,7 +25,7 @@ Data is hosted on Hugging Face and downloaded once per container into a local ca
 - Yearly trend charts for selected drugs
 - Modern chart-detail tables are collapsed behind focused "View detailed rows" expanders to reduce dashboard clutter
 - US state choropleth with a **Total Cost / Per Capita Cost** toggle (Census Bureau Vintage 2023 population estimates)
-- **Ask AI** chatbot (Claude Haiku 4.5) that writes DuckDB SQL against the dataset and explains results in plain English
+- **Ask AI** chatbot (Claude Haiku 4.5) that writes DuckDB SQL across the shared dashboard rollups and explains results in plain English
 
 ### Med B Drugs Dashboard
 
@@ -58,7 +60,7 @@ Source of truth for all production data is the public Hugging Face dataset [`mba
 
 | File on HF | Size | Purpose |
 |---|---|---|
-| `processed/medicare_partd_2021_2023.parquet` | 69 MB | Aggregated rows used by the Dashboard and Ask AI's DuckDB view |
+| `processed/medicare_partd_2021_2023.parquet` | 69 MB | Aggregated rows used by the Med D dashboard and Ask AI's Part D DuckDB view |
 | `processed/medicare_partd_top_providers_by_drug_2021_2023.parquet` | 14 MB | Top-providers-by-drug summary used by the Dashboard |
 | `prescribers/year=YYYY/State=XX/data_0.parquet` | partitioned ~78M rows | Per-prescriber rows used by Provider Search Part D mode |
 | `partb_prescribers/year=YYYY/State=XX/data_0.parquet` | partitioned ~1.5M rows | Per-rendering-provider Part B rows (drug HCPCS only); built from CMS Physician PUF; powers Provider Search Part B mode. Note: "Prescriber NPI/Name" columns are kept for partition-naming parallelism with Part D, but the values are the *rendering* clinician (who administered the drug and billed Medicare), not necessarily the ordering clinician. The UI surfaces these as "Rendering Provider" / "Rendering NPI". |
@@ -117,6 +119,7 @@ The first page load downloads ~83 MB of dashboard parquets from HF into the loca
 .
 ├── app.py                          # Streamlit entry point; declares pages + nav
 ├── Med_D_dashboard.py              # Med D Drugs Dashboard page
+├── dashboard_ai.py                 # shared Ask AI dialog + DuckDB rollup views
 ├── dashboard_tables.py             # shared modern table rendering + column formatting helpers
 ├── build_provider_summary.py       # offline ETL: top-providers-by-drug rollup
 ├── pages/

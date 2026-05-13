@@ -1,12 +1,9 @@
 from __future__ import annotations
 
-import json
 import re
 from pathlib import Path
 from typing import Iterable
 
-import anthropic
-import duckdb
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -14,6 +11,7 @@ from huggingface_hub import hf_hub_download
 from plotly.subplots import make_subplots
 import streamlit as st
 
+from dashboard_ai import render_chatbot_button
 from dashboard_tables import render_chart_detail_table
 
 
@@ -1289,294 +1287,6 @@ def _select_options(series: pd.Series) -> list[str]:
     return sorted(series.dropna().astype(str).unique().tolist())
 
 
-CHATBOT_MODEL = "claude-haiku-4-5"
-CHATBOT_MAX_TOOL_CALLS = 5
-CHATBOT_ROW_LIMIT = 50
-CHATBOT_MAX_TOKENS = 4096
-
-CHATBOT_SYSTEM_PROMPT = """\
-You are a data analyst for the Medicare Part D Prescribing dashboard. \
-Answer the user's questions by querying a DuckDB table called `medicare` via the run_sql tool.
-
-Schema of `medicare` (years 2021-2023):
-  Year (INTEGER) — 2021, 2022, or 2023
-  State (VARCHAR) — full state name e.g. 'California'. Some rows are 'Unknown' or US territories.
-  Specialty (VARCHAR) — prescriber specialty e.g. 'Cardiology', 'Internal Medicine'.
-    Note: 'Interventional Cardiology' is grouped into 'Cardiology';
-    'Medical Oncology' is grouped into 'Hematology-Oncology'.
-  "Brand Name" (VARCHAR) — drug brand name (case-sensitive)
-  "Generic Name" (VARCHAR) — drug generic name (case-sensitive)
-  "Total Drug Cost" (DOUBLE) — total cost in USD
-  "Total Claims" (BIGINT)
-  "Total 30-Day Fills" (DOUBLE)
-  "Cost per Claim" (DOUBLE)
-  "Cost per 30-Day Fill" (DOUBLE)
-
-Guidelines:
-- Always wrap multi-word column names in double quotes.
-- LIMIT your final SELECT to 50 rows.
-- After receiving query results, write a 1-3 sentence answer in plain English.
-- Do not invent column names or values that aren't in the schema above.
-
-Drug name matching (CRITICAL):
-- The user's term may be a brand name, a generic name, a partial name, a misspelling, \
-or a name that has dosage/form suffixes in the data (e.g. "Dupixent" is stored as \
-"Dupixent Pen" and "Dupixent Syringe"; "Rosuvastatin" is stored as "Rosuvastatin Calcium"; \
-"Xeljanz" is stored as both "Xeljanz" and "Xeljanz XR").
-- ALWAYS match drug names with ILIKE '%term%' on BOTH "Brand Name" AND "Generic Name". \
-NEVER use `=` for drug names.
-- ALWAYS aggregate (SUM / SUM / SUM) across all matching rows so brand/form variants combine \
-into one total.
-- Example: "How much was spent on Dupixent in 2023?" →
-    SELECT SUM("Total Drug Cost") AS total_cost
-    FROM medicare
-    WHERE Year = 2023
-      AND ("Brand Name" ILIKE '%Dupixent%' OR "Generic Name" ILIKE '%Dupixent%');
-- Example: "spending on rosuvastatin in 2023" →
-    SELECT SUM("Total Drug Cost") AS total_cost
-    FROM medicare
-    WHERE Year = 2023
-      AND ("Brand Name" ILIKE '%rosuvastatin%' OR "Generic Name" ILIKE '%rosuvastatin%');
-- If a drug query returns no rows or NULL, retry with a shorter substring of the term \
-(e.g. drop the last few characters) before telling the user data is unavailable.
-
-Specialty matching:
-- Use ILIKE '%term%' on Specialty for partial matches.
-"""
-
-RUN_SQL_TOOL = {
-    "name": "run_sql",
-    "description": "Execute a read-only SELECT or WITH query against the `medicare` table and return the rows.",
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "sql": {
-                "type": "string",
-                "description": "A read-only SQL query (SELECT or WITH only)",
-            },
-        },
-        "required": ["sql"],
-    },
-}
-
-
-@st.cache_resource(show_spinner=False)
-def _get_chatbot_client() -> anthropic.Anthropic | None:
-    api_key = st.secrets.get("ANTHROPIC_API_KEY") if hasattr(st, "secrets") else None
-    if not api_key:
-        return None
-    return anthropic.Anthropic(api_key=api_key)
-
-
-@st.cache_resource(show_spinner=False)
-def _get_duckdb_view():
-    con = duckdb.connect(":memory:")
-    con.execute(
-        f"CREATE VIEW medicare AS SELECT * FROM read_parquet('{_resolved_processed_path()}')"
-    )
-    return con
-
-
-_FORBIDDEN_SQL_KEYWORDS = (
-    "INSERT", "UPDATE", "DELETE", "DROP", "CREATE", "ALTER",
-    "ATTACH", "DETACH", "COPY", "PRAGMA", "EXPORT", "IMPORT",
-)
-
-
-def _execute_sql(sql: str) -> dict:
-    sql_clean = sql.strip().rstrip(";").strip()
-    if not sql_clean:
-        return {"error": "Empty query."}
-    upper = sql_clean.upper()
-    if not (upper.startswith("SELECT") or upper.startswith("WITH")):
-        return {"error": "Only SELECT or WITH queries are permitted."}
-    for kw in _FORBIDDEN_SQL_KEYWORDS:
-        if f" {kw} " in f" {upper} " or f" {kw}(" in f" {upper}(":
-            return {"error": f"The {kw} keyword is not permitted."}
-    try:
-        result = _get_duckdb_view().execute(sql_clean).fetchdf()
-    except Exception as exc:
-        return {"error": f"SQL error: {exc}"}
-
-    total_rows = len(result)
-    if total_rows == 0:
-        return {"row_count": 0, "rows": []}
-    truncated = total_rows > CHATBOT_ROW_LIMIT
-    preview = result.head(CHATBOT_ROW_LIMIT)
-    return {
-        "row_count": total_rows,
-        "truncated": truncated,
-        "rows": preview.astype(object).where(preview.notna(), None).to_dict(orient="records"),
-    }
-
-
-def _is_quota_error(exc: Exception) -> bool:
-    return isinstance(exc, anthropic.RateLimitError)
-
-
-def _run_chatbot_turn(client: anthropic.Anthropic, history: list) -> tuple[str, str | None]:
-    """Run the model + tool loop until we get a text answer. Returns (answer, sql_used)."""
-    messages = list(history)
-    sql_used: str | None = None
-    system_blocks = [
-        {
-            "type": "text",
-            "text": CHATBOT_SYSTEM_PROMPT,
-            "cache_control": {"type": "ephemeral"},
-        }
-    ]
-
-    for _ in range(CHATBOT_MAX_TOOL_CALLS):
-        response = client.messages.create(
-            model=CHATBOT_MODEL,
-            max_tokens=CHATBOT_MAX_TOKENS,
-            system=system_blocks,
-            tools=[RUN_SQL_TOOL],
-            messages=messages,
-        )
-
-        tool_use_block = None
-        text_parts: list[str] = []
-        for block in response.content:
-            if block.type == "tool_use":
-                tool_use_block = block
-            elif block.type == "text":
-                text_parts.append(block.text)
-
-        if response.stop_reason != "tool_use" or tool_use_block is None:
-            answer = "\n".join(t for t in text_parts if t).strip()
-            return (answer or "(no response)", sql_used)
-
-        sql = tool_use_block.input.get("sql", "") if isinstance(tool_use_block.input, dict) else ""
-        sql_used = sql
-        result = _execute_sql(sql)
-        messages.append({"role": "assistant", "content": response.content})
-        messages.append(
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": tool_use_block.id,
-                        "content": json.dumps(result, default=str),
-                    }
-                ],
-            }
-        )
-
-    return (
-        "I wasn't able to land on an answer within my query budget. "
-        "Try rephrasing or narrowing the question.",
-        sql_used,
-    )
-
-
-def _pair_chat_messages(messages: list[dict]) -> list[tuple[dict, dict | None]]:
-    pairs: list[tuple[dict, dict | None]] = []
-    i = 0
-    while i < len(messages):
-        if (
-            messages[i]["role"] == "user"
-            and i + 1 < len(messages)
-            and messages[i + 1]["role"] == "assistant"
-        ):
-            pairs.append((messages[i], messages[i + 1]))
-            i += 2
-        else:
-            pairs.append((messages[i], None))
-            i += 1
-    return pairs
-
-
-@st.dialog("Ask AI", width="large")
-def _open_chatbot_dialog() -> None:
-    render_chatbot()
-
-
-def _escape_dollars(text: str) -> str:
-    return re.sub(r"(?<!\\)\$", r"\\$", text)
-
-
-def render_chatbot() -> None:
-    st.markdown(
-        "Ask a question about Medicare Part D prescribing. The bot writes SQL "
-        "against the full 2021-2023 dataset (filters from the Dashboard tab don't apply here)."
-    )
-
-    client = _get_chatbot_client()
-    if client is None:
-        st.error(
-            "Anthropic API key not configured. Add `ANTHROPIC_API_KEY` to "
-            "`.streamlit/secrets.toml` to enable the chatbot."
-        )
-        return
-
-    if "chat_messages" not in st.session_state:
-        st.session_state.chat_messages = []
-
-    suggestion_cols = st.columns(3)
-    suggestions = [
-        "What were the top 5 drugs by total cost in 2023?",
-        "Which state had the highest spending on Eliquis?",
-        "How did Cardiology spending change from 2021 to 2023?",
-    ]
-    pending_input: str | None = None
-    for col, suggestion in zip(suggestion_cols, suggestions):
-        with col:
-            if st.button(suggestion, key=f"chat_suggest_{suggestion}", use_container_width=True):
-                pending_input = suggestion
-
-    user_input = st.chat_input("Ask a question about the Medicare Part D data")
-    actual_input = user_input or pending_input
-
-    if actual_input:
-        st.session_state.chat_messages.append({"role": "user", "content": actual_input})
-
-        history = []
-        for msg in st.session_state.chat_messages:
-            role = "user" if msg["role"] == "user" else "assistant"
-            history.append({"role": role, "content": msg["content"]})
-
-        with st.spinner("Thinking..."):
-            try:
-                answer, sql_used = _run_chatbot_turn(client, history)
-            except Exception as exc:
-                err_type = type(exc).__name__
-                err_str = str(exc)
-                if _is_quota_error(exc):
-                    answer = (
-                        "Anthropic API rate limit or spend cap reached. "
-                        "Please try again later, or check usage in the Anthropic Console.\n\n"
-                        f"_Underlying error — **{err_type}**: `{err_str}`_"
-                    )
-                else:
-                    answer = (
-                        f"Sorry, something went wrong.\n\n"
-                        f"**{err_type}**: `{err_str}`"
-                    )
-                sql_used = None
-
-        entry = {"role": "assistant", "content": answer}
-        if sql_used:
-            entry["sql"] = sql_used
-        st.session_state.chat_messages.append(entry)
-
-    pairs = _pair_chat_messages(st.session_state.chat_messages)
-    if pairs:
-        st.markdown("---")
-    for idx, (user_msg, assistant_msg) in enumerate(reversed(pairs)):
-        if idx > 0:
-            st.markdown("---")
-        with st.chat_message("user"):
-            st.markdown(user_msg["content"])
-        if assistant_msg is not None:
-            with st.chat_message("assistant"):
-                st.markdown(_escape_dollars(assistant_msg["content"]))
-                if assistant_msg.get("sql"):
-                    with st.expander("Show SQL"):
-                        st.code(assistant_msg["sql"], language="sql")
-
-
 def main() -> None:
     st.markdown(
         """
@@ -1619,12 +1329,7 @@ def main() -> None:
 
     header_extra_cols = st.columns([6, 1])
     with header_extra_cols[1]:
-        if st.button(
-            "Ask AI",
-            icon=":material/auto_awesome:",
-            use_container_width=True,
-        ):
-            _open_chatbot_dialog()
+        render_chatbot_button()
 
     year_options = sorted(df["Year"].dropna().astype(int).unique().tolist())
     state_options = _select_options(df["State"])

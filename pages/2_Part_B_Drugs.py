@@ -5,6 +5,7 @@ import plotly.express as px
 import streamlit as st
 from huggingface_hub import hf_hub_download
 
+from dashboard_ai import render_chatbot_button
 from dashboard_tables import render_detail_table
 
 HF_DATASET_ID = "mbateya/medicare_part_d_prescribers"
@@ -396,6 +397,10 @@ st.caption(
     "(infusions, injectables in office/clinic) — distinct from the Part D "
     "pharmacy-dispensed drugs on the Dashboard tab."
 )
+
+header_extra_cols = st.columns([6, 1])
+with header_extra_cols[1]:
+    render_chatbot_button()
 
 filter_cols = st.columns([1.6, 1.3])
 with filter_cols[0]:

@@ -6,6 +6,7 @@ import duckdb
 import pandas as pd
 import streamlit as st
 
+from dashboard_ai import render_chatbot_button
 from dashboard_tables import render_results_table
 
 HF_DATASET_BASE = (
@@ -259,6 +260,10 @@ st.caption(
     "(clinicians who administered the drug and billed Medicare for it) by city + drug "
     "or by provider name. Data hosted on Hugging Face."
 )
+
+header_extra_cols = st.columns([6, 1])
+with header_extra_cols[1]:
+    render_chatbot_button()
 
 part = st.radio(
     "Medicare Part",

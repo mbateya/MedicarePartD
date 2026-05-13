@@ -15,6 +15,7 @@ import plotly.express as px
 import streamlit as st
 from huggingface_hub import hf_hub_download
 
+from dashboard_ai import render_chatbot_button
 from dashboard_tables import render_detail_table
 
 HF_DATASET_ID = "mbateya/medicare_part_d_prescribers"
@@ -408,6 +409,10 @@ rendering providers and overcounts patients who saw multiple providers.
 """,
     unsafe_allow_html=True,
 )
+
+header_extra_cols = st.columns([6, 1])
+with header_extra_cols[1]:
+    render_chatbot_button()
 
 filter_cols = st.columns([1.6, 2.2, 1.2])
 with filter_cols[0]:
