@@ -72,6 +72,14 @@ def install_design_system() -> None:
     letter-spacing: .05em;
     margin-bottom: 8px;
 }
+[data-testid="stPlotlyChart"] {
+    background: rgba(255, 255, 255, 0.88);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 10px 12px;
+    margin-bottom: 14px;
+    box-shadow: 0 18px 42px rgba(31, 47, 70, 0.08);
+}
 .section-heading {
     margin: 34px 0 12px;
     display: flex;
@@ -190,5 +198,4 @@ def scope_note(text: str) -> None:
 
 
 def chart_card(fig) -> None:
-    with st.container(border=True):
-        st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True)
